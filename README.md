@@ -1,5 +1,4 @@
-# SOTER
-#Aplicação RTOS e STM32 com Sensor de Pressão e Buzzer usando MQTT
+# SOTER - Aplicação RTOS e STM32 com Sensor de Pressão e Buzzer usando MQTT
 
 Este projeto tem como principal objetivo o de criar uma aplicação em um Sistema Operativo Tempo Real (RTOS) utilizando um microcontrolador STM32, um sensor de pressão, um buzzer e o protocolo MQTT. Neste projeto, será possível ler dados do sensor de pressão, publicá-los em um tópico MQTT e ativar o buzzer quando um determinado valor é atingido.
 
