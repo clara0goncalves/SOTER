@@ -2,6 +2,9 @@
 
 Este projeto tem como principal objetivo o de criar uma aplicação em um Sistema Operativo Tempo Real (RTOS) utilizando um microcontrolador STM32, um sensor de pressão, um buzzer e o protocolo MQTT. Neste projeto, será possível ler dados do sensor de pressão, publicá-los em um tópico MQTT e ativar o buzzer quando um determinado valor é atingido.
 
+-------
+Sensor de pressao testa a agua que esta a encher um copo. Este valor e transformado em percentagem para dizer quando parar de encher. Toca o buzzer e suspende temperatura, lcd (falar sobre buzzer e as suas funcoes)
+-------
 ## Introdução
 Neste trabalho, está apresentado uma aplicação em um Sistema Operativo Tempo Real (RTOS) utilizando um microcontrolador STM32 e um sensor de pressão. A aplicação incluirá também um buzzer e utilizará o protocolo MQTT para comunicação.
 
