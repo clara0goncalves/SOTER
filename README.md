@@ -38,3 +38,9 @@ Neste trabalho, está apresentado uma aplicação em um Sistema Operativo Tempo 
 
 ## Links Uteis
 - https://bluerobotics.com/learn/bar30-arduino-guide/
+- https://github.com/GrzHeller/STM32H750B-DK_TouchGFX_FreeRTOS_MQTT_Example
+- https://github.com/DiegoPaezA/ESP32-freeRTOS
+- https://github.com/tracediary/FreeRTOS-STM32L1
+- https://github.com/hossam-mohamed-farouk/Home-control-via-MQTT-and-free-RTOS
+- https://github.com/Mahmoud-Megawer/FreeRTOS-TM4C123-IOT-Application
+- https://github.com/Adam199903/RTOS-Enviroment-System
