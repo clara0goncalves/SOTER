@@ -47,3 +47,5 @@ Neste trabalho, está apresentado uma aplicação em um Sistema Operativo Tempo 
 - https://github.com/hossam-mohamed-farouk/Home-control-via-MQTT-and-free-RTOS
 - https://github.com/Mahmoud-Megawer/FreeRTOS-TM4C123-IOT-Application
 - https://github.com/Adam199903/RTOS-Enviroment-System
+
+- https://dev.to/apollolabsbin/stm32f4-embedded-rust-at-the-hal-pwm-buzzer-3f1b
