@@ -34,3 +34,7 @@ Neste trabalho, está apresentado uma aplicação em um Sistema Operativo Tempo 
 2. Verificação do envio e receção dos dados dos sensores no tópico MQTT.
 3. Testar o buzzer de acordo com o valor apresentado no sensor de pressão.
 4. Verificação da veracidade dos dados dos sensores enviados pelo broker MQTT. 
+
+
+## Links Uteis
+- https://bluerobotics.com/learn/bar30-arduino-guide/
