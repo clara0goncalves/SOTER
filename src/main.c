@@ -144,7 +144,7 @@ int main( void )
 
     I2C2_Config();
 
-    uint8_t ctrl_reg1 = I2C_read(_MS5837_ADDR, _MS5837_CONVERT_D1_256);
+    //uint8_t ctrl_reg1 = I2C_read(_MS5837_ADDR, _MS5837_CONVERT_D1_256);
 
 
 
