@@ -23,6 +23,14 @@
 #define mainUSART_TASK_PRIORITY	( tskIDLE_PRIORITY + 1)
 #define mainLCD_TASK_PRIORITY	( tskIDLE_PRIORITY + 1)
 
+
+#define _MS5837_ADDR             = 0x76
+#define _MS5837_RESET            = 0x1E
+#define _MS5837_ADC_READ         = 0x00
+#define _MS5837_PROM_READ        = 0xA0
+#define _MS5837_CONVERT_D1_256   = 0x40
+#define _MS5837_CONVERT_D2_256   = 0x50
+
 /* The rate at which the flash task toggles the LED. */
 #define mainFLASH_DELAY			( ( TickType_t ) 1000 / portTICK_RATE_MS )
 /* The rate at which the temperature is read. */
@@ -61,6 +69,12 @@ static void prvSetupUSART2( void );
 
 /* USART2 send message. */
 static void prvSendMessageUSART2(char *message);
+
+void I2C2_Config(void);
+
+void I2C_write(uint8_t dev_addr, uint8_t reg_addr, uint8_t reg_data);
+
+uint8_t I2C_read(uint8_t dev_addr, uint8_t reg_addr);
 
 /***************************************/
 /* Task 1 handle variable. */
@@ -125,6 +139,12 @@ int main( void )
     prvSetupEXTI1();
     prvSetupADC();
     prvSetupEXTI15_10();
+
+    I2C2_Config();
+
+    uint8_t ctrl_reg1 = I2C_read(MMA8452Q_ADDR, MMA8452Q_CTRL_REG1);
+
+
 
     //Create a message queue with a size of 10 and element size of 1 byte
     xQueue = xQueueCreate(10, sizeof(char));
@@ -198,6 +218,7 @@ int main( void )
 }
 
 /*-----------------------------------------------------------*/
+
 
 
 static void prvSetupADC( void )
@@ -416,6 +437,8 @@ static void prvSetupGPIO( void )
     GPIO_InitTypeDef GPIO_InitStructure;
     RCC_APB2PeriphClockCmd( RCC_APB2Periph_AFIO , ENABLE );
 
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_I2C2, ENABLE);
+
     /* Enable GPIOB clock */
     RCC_APB2PeriphClockCmd( RCC_APB2Periph_GPIOB , ENABLE );
 
@@ -442,9 +465,84 @@ static void prvSetupGPIO( void )
 	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
 
 	GPIO_Init(GPIOC, &GPIO_InitStructure);
+
+	//Inicialização I2C
+	GPIO_InitTypeDef GPIO_InitTypeDefStruct;
+	GPIO_StructInit(&GPIO_InitTypeDefStruct);
+	GPIO_InitTypeDefStruct.GPIO_Pin = GPIO_Pin_10 | GPIO_Pin_11; // SCL, SDA, SA0
+	GPIO_InitTypeDefStruct.GPIO_Mode = GPIO_Mode_AF_OD;
+	GPIO_InitTypeDefStruct.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init(GPIOB, &GPIO_InitTypeDefStruct);
 }
 /*-----------------------------------------------------------*/
 
+void I2C2_Config(void)
+{
+	//Configuração I2C
+
+	I2C_InitTypeDef I2C_InitStructure;
+
+	I2C_StructInit(&I2C_InitStructure);
+	I2C_InitStructure.I2C_Mode = I2C_Mode_I2C;
+	I2C_InitStructure.I2C_ClockSpeed = 400000;
+	I2C_InitStructure.I2C_DutyCycle = I2C_DutyCycle_2;
+	I2C_InitStructure.I2C_OwnAddress1 = 0x00;
+	I2C_InitStructure.I2C_Ack = I2C_Ack_Enable;
+	I2C_InitStructure.I2C_AcknowledgedAddress = I2C_AcknowledgedAddress_7bit;
+	I2C_Init(I2C2, &I2C_InitStructure);
+	I2C_Cmd(I2C2, ENABLE);
+
+}
+
+void I2C_write(uint8_t dev_addr, uint8_t reg_addr, uint8_t reg_data)
+{
+	while(!I2C_GetFlagStatus(I2C2, I2C_FLAG_BUSY)); // while the bus is busy
+
+	I2C_AcknowledgeConfig(I2C2, ENABLE);
+
+	I2C_GenerateSTART(I2C2, ENABLE); // send I2C start condition
+	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_MODE_SELECT));
+
+	I2C_Send7bitAddress(I2C2, dev_addr, I2C_Direction_Transmitter); // send device slave address for write
+	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_TRANSMITTER_MODE_SELECTED));
+
+	I2C_SendData(I2C2, reg_addr); // send the device internal register address
+	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_BYTE_TRANSMITTED));
+
+	I2C_SendData(I2C2, reg_data); // send data to register
+	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_BYTE_TRANSMITTED));
+
+	I2C_GenerateSTOP(I2C2, ENABLE);
+}
+
+uint8_t I2C_read(uint8_t dev_addr, uint8_t reg_addr)
+{
+	I2C_AcknowledgeConfig(I2C2, DISABLE);
+	while(I2C_GetFlagStatus(I2C2, I2C_FLAG_BUSY)); // while the bus is busy
+
+	I2C_GenerateSTART(I2C2, ENABLE); // send I2C start condition
+	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_MODE_SELECT));
+
+	I2C_Send7bitAddress(I2C2, dev_addr, I2C_Direction_Transmitter); // send device slave address for write
+	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_TRANSMITTER_MODE_SELECTED));
+
+	I2C_SendData(I2C2, reg_addr); //0x80 | reg_addr); // send the device internal register address
+	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_BYTE_TRANSMITTED));
+
+	I2C_GenerateSTART(I2C2, ENABLE); // repeated start
+	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_MODE_SELECT));
+
+	I2C_Send7bitAddress(I2C2, dev_addr, I2C_Direction_Receiver); // send device slave address for read
+	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_RECEIVER_MODE_SELECTED));
+	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_BYTE_RECEIVED));
+
+	uint8_t read_reg = I2C_ReceiveData(I2C2);
+
+	I2C_GenerateSTOP(I2C2, ENABLE);
+	I2C_AcknowledgeConfig(I2C2, DISABLE);
+
+	return read_reg;
+}
 
 
 void prvSetupUSART2( void )
