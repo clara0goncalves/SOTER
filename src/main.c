@@ -24,12 +24,12 @@
 #define mainLCD_TASK_PRIORITY	( tskIDLE_PRIORITY + 1)
 
 
-#define _MS5837_ADDR             = 0x76
-#define _MS5837_RESET            = 0x1E
-#define _MS5837_ADC_READ         = 0x00
-#define _MS5837_PROM_READ        = 0xA0
-#define _MS5837_CONVERT_D1_256   = 0x40
-#define _MS5837_CONVERT_D2_256   = 0x50
+#define _MS5837_ADDR              0x76
+#define _MS5837_RESET             0x1E
+#define _MS5837_ADC_READ          0x00
+#define _MS5837_PROM_READ         0xA0
+#define _MS5837_CONVERT_D1_256    0x40
+#define _MS5837_CONVERT_D2_256    0x50
 
 /* The rate at which the flash task toggles the LED. */
 #define mainFLASH_DELAY			( ( TickType_t ) 1000 / portTICK_RATE_MS )
@@ -52,7 +52,7 @@ static void prvTempTask( void *pvParameters );
 
 static void prvTask4( void *pvParameters );
 
-static void prvTempTask3(void *pvParameters);
+static void prvSensor(void *pvParameters);
 /* Button task. */
 static void prvButtonTask( void *pvParameters );
 
@@ -116,6 +116,7 @@ typedef struct button_t {
     uint8_t state;
 } button_t;
 
+
 //Declaração dos botões
 button_t button_PA1 = {GPIO_Pin_1, GPIOA, 'O', 0, 0};
 button_t button_PC10 = {GPIO_Pin_10, GPIOC, 'U', 0, 0};
@@ -127,6 +128,7 @@ button_t button_PC13 = {GPIO_Pin_13, GPIOC, 'D', 0, 0};
 typedef struct val{
 	TickType_t tick;
 	int32_t temp;
+	int32_t press;
 }val;
 
 int main( void )
@@ -142,7 +144,7 @@ int main( void )
 
     I2C2_Config();
 
-    uint8_t ctrl_reg1 = I2C_read(MMA8452Q_ADDR, MMA8452Q_CTRL_REG1);
+    uint8_t ctrl_reg1 = I2C_read(_MS5837_ADDR, _MS5837_CONVERT_D1_256);
 
 
 
@@ -208,7 +210,7 @@ int main( void )
  	xTaskCreate( prvFlashTask1, "Flash1", configMINIMAL_STACK_SIZE, NULL, mainFLASH_TASK_PRIORITY, &HandleTask2 );
     xTaskCreate( prvButtonTask, "Button",configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask3 );
     xTaskCreate( prvTempTask, "Temp", configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask4 );
-    xTaskCreate( prvTempTask3, "Temp Display", configMINIMAL_STACK_SIZE, NULL, mainFLASH_TASK_PRIORITY, &HandleTask5 );
+    xTaskCreate( prvSensor, "Sensor press", configMINIMAL_STACK_SIZE, NULL, mainFLASH_TASK_PRIORITY, &HandleTask5 );
     xTaskCreate( prvTask4, "Temp task", configMINIMAL_STACK_SIZE, NULL, mainFLASH_TASK_PRIORITY, &HandleTask6 );
     /* Start the scheduler. */
 	vTaskStartScheduler();
@@ -263,20 +265,32 @@ static void prvFlashTask1( void *pvParameters )
 /*-----------------------------------------------------------*/
 
 
-/* Example task to present characters in ther display.*/
 
 static void prvLcdTask( void *pvParameters )
 {
 	lcd_init( );
 	char buf[30];
-	static uint32_t start_time = 0;
+	//static uint32_t start_time = 0;
+
+	val valores;
+
 	for(;;)
 	{
 		// progress bar //
-		for(int i = 10; i <= 140; i += 10) lcd_draw_rect(10, i, 30, 10, 0xFFFF);
+		for(int i = 10; i <= 100; i += 10) lcd_draw_rect(10, i, 30, 10, 0xFFFF);
 
 		//xQueueReceive(xQueue, &ulVar, (TickType_t) portMAX_DELAY );
 		//lcd_draw_char( 63-(5*10)/2, 79-(7*10)/2, ulVar, 0xFFFF, 10 );
+
+		xQueuePeek(xQueue3, &valores, (TickType_t) portMAX_DELAY); // recebe do prvSensor os valores do tick, temp e %
+
+		sprintf(buf, "Temp: %ld", valores.temp);
+		lcd_draw_string(60,20,buf, 0xFFFF, 1);
+		sprintf(buf, "Tick: %ld", valores.tick);
+		lcd_draw_string(60,40,buf, 0xFFFF, 1);
+		sprintf(buf, "Pressao: %ld", valores.press);
+		lcd_draw_string(60,60,buf, 0xFFFF, 1);
+
 		vTaskDelay( (TickType_t ) 2000 / portTICK_RATE_MS);
 	}
 }
@@ -325,21 +339,29 @@ static void prvTempTask( void *pvParameters )
 }
 /*-----------------------------------------------------------*/
 
-static void prvTempTask3(void *pvParameters){
+static void prvSensor(void *pvParameters){
 	lcd_init();
-	int32_t temp;
-	TickType_t t1;
+
 	char buf_temp[20];
 	char buf_tick[20];
+
+	val valores;
+
 	for(;;){
-		xQueueReceive(xQueue2, &temp, (TickType_t) portMAX_DELAY);
-		sprintf(buf_temp, "Temp: %ld", temp);
-		lcd_draw_string(60,20,buf_temp, 0xFFFF, 1);
-		//sprintf(buf_tick, "Tick: %d", t1);
-		//lcd_draw_string(10,20,buf_tick, 0xFFFF, 1);
+
+		//Receber Temp e press
+
+		valores.tick =xTaskGetTickCount();
+		//valores.press=
+		//valores.temp=
+
+		xQueueSendToBack(xQueue3, (void *) &valores, (TickType_t) 10); //envia valores do tick, temp e press %
+
 
 	}
 }
+
+
 
 /*-----------------------------------------------------------*/
 static void prvTask4(void *pvParameters){
