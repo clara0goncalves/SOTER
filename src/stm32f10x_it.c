@@ -231,24 +231,6 @@ extern QueueHandle_t button_queue;
 
 void EXTI1_IRQHandler(void)
 {
-	static BaseType_t pxHigherPriorityTaskWoken;
-    //Check if the interrupt is caused by button PA1
-    if(EXTI_GetITStatus(EXTI_Line1) != RESET)
-    {
-        //Check for debounce time
-        uint32_t current_time = xTaskGetTickCount();
-        if(current_time - button_PA1.last_press_time > DEBOUNCE_TIME_MS)
-        {
-            //Push the character associated with button PA1 to the button event queue
-            xQueueSendToBackFromISR(button_queue, &button_PA1.character, pxHigherPriorityTaskWoken);
-            button_PA1.last_press_time = current_time;
-        }
-        //Clear the interrupt flag
-        EXTI_ClearITPendingBit(EXTI_Line1);
-    }
-	if(pxHigherPriorityTaskWoken == pdTRUE){
-		taskYIELD();
-	}
 
 
 }
@@ -631,6 +613,7 @@ void EXTI15_10_IRQHandler()
 {
 	static BaseType_t pxHigherPriorityTaskWoken;
     //Check if the interrupt is caused by button PC10
+
     if(EXTI_GetITStatus(EXTI_Line10) != RESET)
     {
         //Check for debounce time
