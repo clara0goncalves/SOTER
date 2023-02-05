@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <lcd.h>
 #include <stm32f10x.h>
+#include <mma8452q.h>
 
 /* Scheduler includes. */
 #include "FreeRTOS.h"
@@ -84,6 +85,7 @@ void SPI(void);
 
 uint8_t SPI_Send(uint8_t data);
 
+
 /* Task 1 handle variable. */
 TaskHandle_t HandleTask1;
 
@@ -113,6 +115,12 @@ QueueHandle_t button_queue;  /* Global variable. */
 
 QueueHandle_t xQueue3;
 
+/* Semaphore Binary Handle Variable */
+SemaphoreHandle_t xSemaphoreBinary;
+
+SemaphoreHandle_t xSemaphoreBinary1;
+
+
 
 
 typedef struct button_t {
@@ -133,14 +141,13 @@ typedef struct eixos{
 button_t button_PA1 = {GPIO_Pin_1, GPIOA, 'S', 0, 0}; //Suspend
 button_t button_PC10 = {GPIO_Pin_10, GPIOC, 'I', 0, 0}; //Iniciar
 button_t button_PC11 = {GPIO_Pin_11, GPIOC, 'R', 0, 0}; //Resume
-button_t button_PC12 = {GPIO_Pin_12, GPIOC, 'P', 0, 0}; //Parar
+button_t button_PC13 = {GPIO_Pin_12, GPIOC, 'P', 0, 0}; //Parar
 
 
 
 typedef struct val{
 	TickType_t tick;
 	int32_t temp;
-	int32_t press;
 }val;
 
 int main( void )
@@ -158,7 +165,7 @@ int main( void )
 
 
     //Create a message queue with a size of 10 and element size of 1 byte
-    xQueue = xQueueCreate(10, sizeof(char));
+    xQueue = xQueueCreate(40, sizeof(eixos));
 
     //Check if the queue was created successfully
     if( xQueue == 0 ) {
@@ -214,6 +221,18 @@ int main( void )
        		/* Queue created successfully. */
    		}
 
+	xSemaphoreBinary = xSemaphoreCreateBinary();
+	if( xSemaphoreBinary == NULL )
+	{
+		/*  Error creating the semaphore, it cannot be used. */
+	}
+
+	xSemaphoreBinary1 = xSemaphoreCreateBinary();
+	if( xSemaphoreBinary1 == NULL )
+	{
+		/*  Error creating the semaphore, it cannot be used. */
+	}
+
 	/* Create the tasks */
  	xTaskCreate( prvLcdTask, "Lcd", configMINIMAL_STACK_SIZE, NULL, mainLCD_TASK_PRIORITY, &HandleTask1 );
  	xTaskCreate( prvFlashTask1, "Flash1", configMINIMAL_STACK_SIZE, NULL, mainFLASH_TASK_PRIORITY, &HandleTask2 );
@@ -264,7 +283,8 @@ void SPI(void){
 
 	GPIO_WriteBit(GPIOD,GPIO_Pin_2,Bit_RESET);
 	SPI_Send(0x20);    // CTRL_REG1
-	SPI_Send(0b11000111); //Device on, decimate by 512 (40hz), Z,Y e X Axis enable
+	SPI_Send(0b11000111);
+	//SPI_Send(0b11000111); //Device on, decimate by 512 (40hz), Z,Y e X Axis enable
 	GPIO_WriteBit(GPIOD,GPIO_Pin_2,Bit_SET);
 
 
@@ -273,7 +293,6 @@ void SPI(void){
 	SPI_Send(0b10000000); // Full Scale = +-6g, Update continuo, DRDY enable, little endian (LSB do Eixo X_L = 28h)
 	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_SET);
 }
-
 
 
 static void prvSetupADC( void )
@@ -305,7 +324,12 @@ static void prvSetupADC( void )
 void prvEixos(void *parameters){
 
 	eixos eixos;
+
+	//char buf[30];
+
 	for(;;){
+
+	xSemaphoreTake( xSemaphoreBinary1, (TickType_t) portMAX_DELAY);
 
 	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_RESET); //Eixo X
 	OUTX_L = SPI_Send(0x28|0x80); //Register adress do OUTX_L
@@ -345,9 +369,22 @@ void prvEixos(void *parameters){
 
 	eixos.OUTZ = (OUTZ_H << 8) + OUTZ_L;
 
+
 	//fila de mensagens
 
-	xQueueSendToBack(xQueue, (void *) &eixos, (TickType_t) 10);
+	/*
+	sprintf(buf, "X: %ld", eixos.OUTX);
+	prvSendMessageUSART2(buf);
+	lcd_draw_string(60,20,buf, 0xFFFF, 1);
+	sprintf(buf, "Y: %ld", eixos.OUTY);
+	lcd_draw_string(60,30,buf, 0xFFFF, 1);
+	sprintf(buf, "Z: %ld", eixos.OUTZ);
+	lcd_draw_string(60,40,buf, 0xFFFF, 1);
+*/
+
+	xQueueSendToBack(xQueue, (void *) &eixos, (TickType_t) 200);
+
+	//xSemaphoreGive( xSemaphoreBinary);
 
 
 
@@ -377,23 +414,34 @@ static void prvLcdTask( void *pvParameters )
 	lcd_init( );
 	char buf[30];
 	//static uint32_t start_time = 0;
-	int32_t temp;
+	//int32_t temp;
+	val valores;
 
 	eixos eixos;
+
+	xSemaphoreGive(xSemaphoreBinary1);
 	for(;;)
 	{
-		xQueuePeek(xQueue, &eixos, (TickType_t) portMAX_DELAY); // recebe do prvEixos o X, Y e Z
-		xQueueReceive(xQueue2, &temp, (TickType_t) portMAX_DELAY);
-		sprintf(buf, "X: %ld", temp);
-		lcd_draw_string(60,10,buf, 0xFFFF, 1);
-		sprintf(buf, "X: %ld", eixos.OUTX);
-		lcd_draw_string(60,20,buf, 0xFFFF, 1);
-		sprintf(buf, "Y: %ld", eixos.OUTY);
-		lcd_draw_string(60,30,buf, 0xFFFF, 1);
-		sprintf(buf, "Z: %ld", eixos.OUTZ);
-		lcd_draw_string(60,40,buf, 0xFFFF, 1);
+		xQueueReceive(xQueue, &eixos, (TickType_t) portMAX_DELAY); // recebe do prvEixos o X, Y e Z
+		xQueueReceive(xQueue3, &valores, (TickType_t) portMAX_DELAY);
+		sprintf(buf, "Temp: %ld", valores.temp);
+		lcd_draw_string(40,0,buf, 0xFFFF, 1);
 
-		vTaskDelay( (TickType_t ) 2000 / portTICK_RATE_MS);
+		sprintf(buf, "Tick: %ld", valores.tick);
+		lcd_draw_string(40,10,buf, 0xFFFF, 1);
+
+		sprintf(buf, "X: %ld   ", eixos.OUTX);
+		lcd_draw_string(40,20,buf, 0xFFFF, 1);
+
+		sprintf(buf, "Y: %ld   ", eixos.OUTY);
+		prvSendMessageUSART2(buf);
+		lcd_draw_string(40,30,buf, 0xFFFF, 1);
+
+		sprintf(buf, "Z: %ld   ", eixos.OUTZ);
+		lcd_draw_string(40,40,buf, 0xFFFF, 1);
+
+		xSemaphoreGive(xSemaphoreBinary1);
+		//vTaskDelay( (TickType_t ) 2000 / portTICK_RATE_MS);
 
 		//Check as condicoes dos botoes para apresentar no display o pretendido
 	}
@@ -429,13 +477,13 @@ static void prvTempTask( void *pvParameters )
         /*The temp variable has the temperature value times 10 */
 
 
-        xQueueSendToBack(xQueue2, (void *) &temp, (TickType_t) 10);
+        //xQueueSendToBack(xQueue2, (void *) &temp, (TickType_t) 10);
 
 
         valores.temp = temp;
         valores.tick = xTaskGetTickCount();
 
-        //xQueueSendToBack(xQueue3, (void *) &valores, (TickType_t) 10);
+        xQueueSendToBack(xQueue3, (void *) &valores, (TickType_t) 10);
 
     }
 }
@@ -460,25 +508,25 @@ static void prvButtonTask( void *pvParameters ){
 		xQueueReceive(button_queue, (void *) &button_char, portMAX_DELAY);
 		//sprintf(buf, "1: %ld ,  2: %ld %ld\r\n", t1, t2, dif);
 		//t2=t1;
+		lcd_draw_char( 60, 100, button_char, 0xFFFF, 1 );
 		if(button_char == 'I'){
-			sprintf(buf, "Iniciou andamento");
+			sprintf(buf, "Iniciou andamento \r\n");
 			//give_mutex(I);
 		}else if(button_char == 'P'){
-			sprintf(buf, "Parou");
+			sprintf(buf, "Parou \r\n");
 			//give_mutex(P);
 		}else if(button_char == 'S'){
-			sprintf(buf, "Suspendeu monitor");
+			sprintf(buf, "Suspendeu monitor \r\n");
 		}else if(button_char == 'R'){
-			sprintf(buf, "Reset");
+			sprintf(buf, "Reset \r\n");
 		}
 		prvSendMessageUSART2(buf);
 
-
 		GPIO_WriteBit(GPIOB, GPIO_Pin_1, (1-GPIO_ReadOutputDataBit(GPIOB, GPIO_Pin_1)));
-		if(dif < 100){
+		/*if(dif < 100){
 			//lcd_draw_char( 63-(5*10)/2, 79-(7*10)/2, button_char, 0xFFFF, 1 );
-			lcd_draw_char( 60, 10, button_char, 0xFFFF, 1 );
-		}
+			lcd_draw_char( 60, 100, button_char, 0xFFFF, 1 );
+		}*/
 		//give_mutex(1);
     }
 
@@ -544,6 +592,7 @@ static void prvSetupGPIO( void )
     /* Enable GPIOC clock */
     RCC_APB2PeriphClockCmd( RCC_APB2Periph_GPIOC , ENABLE );
 
+
     RCC_APB1PeriphClockCmd(RCC_APB1Periph_SPI2, ENABLE); //Enable spi2
 	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOD, ENABLE); // SPI CS/SS
 
@@ -559,7 +608,7 @@ static void prvSetupGPIO( void )
 
 	GPIO_Init(GPIOA, &GPIO_InitStructure);
 
-    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_10 | GPIO_Pin_11 | GPIO_Pin_12;
+    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_10 | GPIO_Pin_11 | GPIO_Pin_13;
 	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU;
 	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
 
@@ -715,9 +764,9 @@ void prvSetupEXTI15_10(void){
     /*Connect Key Button EXTI Line to Key Button GPIO Pin*/
     GPIO_EXTILineConfig(GPIO_PortSourceGPIOC, GPIO_PinSource10);
     GPIO_EXTILineConfig(GPIO_PortSourceGPIOC, GPIO_PinSource11);
-    GPIO_EXTILineConfig(GPIO_PortSourceGPIOC, GPIO_PinSource12);
+    GPIO_EXTILineConfig(GPIO_PortSourceGPIOC, GPIO_PinSource13);
 
-    EXTI_InitStructure.EXTI_Line = EXTI_Line10 | EXTI_Line11 | EXTI_Line12;
+    EXTI_InitStructure.EXTI_Line = EXTI_Line10 | EXTI_Line11 | EXTI_Line13;
     EXTI_InitStructure.EXTI_Mode = EXTI_Mode_Interrupt;
     EXTI_InitStructure.EXTI_Trigger = EXTI_Trigger_Rising;//Rising Edge
     EXTI_InitStructure.EXTI_LineCmd = ENABLE;
