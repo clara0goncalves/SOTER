@@ -23,7 +23,6 @@ typedef struct button_t {
 extern button_t button_PA1;
 extern button_t button_PC10;
 extern button_t button_PC11;
-extern button_t button_PC12;
 extern button_t button_PC13;
 
 #define DEBOUNCE_TIME_MS 100
@@ -232,6 +231,7 @@ extern QueueHandle_t button_queue;
 
 void EXTI1_IRQHandler(void)
 {
+	static BaseType_t pxHigherPriorityTaskWoken;
     //Check if the interrupt is caused by button PA1
     if(EXTI_GetITStatus(EXTI_Line1) != RESET)
     {
@@ -240,12 +240,17 @@ void EXTI1_IRQHandler(void)
         if(current_time - button_PA1.last_press_time > DEBOUNCE_TIME_MS)
         {
             //Push the character associated with button PA1 to the button event queue
-            xQueueSendToBackFromISR(button_queue, &button_PA1.character, NULL);
+            xQueueSendToBackFromISR(button_queue, &button_PA1.character, pxHigherPriorityTaskWoken);
             button_PA1.last_press_time = current_time;
         }
         //Clear the interrupt flag
         EXTI_ClearITPendingBit(EXTI_Line1);
     }
+	if(pxHigherPriorityTaskWoken == pdTRUE){
+		taskYIELD();
+	}
+
+
 }
 /*******************************************************************************
 * Function Name  : EXTI2_IRQHandler
@@ -601,7 +606,7 @@ void USART2_IRQHandler(void)
 
 
 
-	xQueueSendToBack(xQueue, &RxData, ( TickType_t ) portMAX_DELAY);
+	//xQueueSendToBack(xQueue, &RxData, ( TickType_t ) portMAX_DELAY);
 }
 
 /*******************************************************************************
@@ -624,6 +629,7 @@ void USART3_IRQHandler(void)
 *******************************************************************************/
 void EXTI15_10_IRQHandler()
 {
+	static BaseType_t pxHigherPriorityTaskWoken;
     //Check if the interrupt is caused by button PC10
     if(EXTI_GetITStatus(EXTI_Line10) != RESET)
     {
@@ -632,7 +638,7 @@ void EXTI15_10_IRQHandler()
         if(current_time - button_PC10.last_press_time > DEBOUNCE_TIME_MS)
         {
             //Push the character associated with button PC10 to the button event queue
-            xQueueSendToBackFromISR(button_queue, &button_PC10.character, NULL);
+            xQueueSendToBackFromISR(button_queue, &button_PC10.character, pxHigherPriorityTaskWoken);
             button_PC10.last_press_time = current_time;
         }
         //Clear the interrupt flag
@@ -647,25 +653,11 @@ void EXTI15_10_IRQHandler()
         if(current_time - button_PC11.last_press_time > DEBOUNCE_TIME_MS)
         {
             //Push the character associated with button PC11 to the button event queue
-            xQueueSendToBackFromISR(button_queue, &button_PC11.character, NULL);
+            xQueueSendToBackFromISR(button_queue, &button_PC11.character, pxHigherPriorityTaskWoken);
             button_PC11.last_press_time = current_time;
         }
         //Clear the interrupt flag
         EXTI_ClearITPendingBit(EXTI_Line11);
-    }
-    //Check if the interrupt is caused by button PC12
-    if(EXTI_GetITStatus(EXTI_Line12) != RESET)
-    {
-        //Check for debounce time
-        uint32_t current_time = xTaskGetTickCount();
-        if(current_time - button_PC12.last_press_time > DEBOUNCE_TIME_MS)
-        {
-            //Push the character associated with button PC12 to the button event queue
-            xQueueSendToBackFromISR(button_queue, &button_PC12.character, NULL);
-            button_PC12.last_press_time = current_time;
-        }
-        //Clear the interrupt flag
-        EXTI_ClearITPendingBit(EXTI_Line12);
     }
     //Check if the interrupt is caused by button PC13
     if(EXTI_GetITStatus(EXTI_Line13) != RESET)
@@ -675,12 +667,16 @@ void EXTI15_10_IRQHandler()
         if(current_time - button_PC13.last_press_time > DEBOUNCE_TIME_MS)
         {
             //Push the character associated with button PC13 to the button event queue
-            xQueueSendToBackFromISR(button_queue, &button_PC13.character, NULL);
+            xQueueSendToBackFromISR(button_queue, &button_PC13.character, pxHigherPriorityTaskWoken);
             button_PC13.last_press_time = current_time;
         }
         //Clear the interrupt flag
         EXTI_ClearITPendingBit(EXTI_Line13);
     }
+	if(pxHigherPriorityTaskWoken == pdTRUE){
+		taskYIELD();
+	}
+
 }
 
 
