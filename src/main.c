@@ -425,20 +425,20 @@ static void prvLcdTask( void *pvParameters )
 		xQueueReceive(xQueue, &eixos, (TickType_t) portMAX_DELAY); // recebe do prvEixos o X, Y e Z
 		xQueueReceive(xQueue3, &valores, (TickType_t) portMAX_DELAY);
 		sprintf(buf, "Temp: %ld", valores.temp);
-		lcd_draw_string(40,0,buf, 0xFFFF, 1);
+		lcd_draw_string(0,0,buf, 0xFFFF, 1);
 
 		sprintf(buf, "Tick: %ld", valores.tick);
-		lcd_draw_string(40,10,buf, 0xFFFF, 1);
+		lcd_draw_string(0,10,buf, 0xFFFF, 1);
 
 		sprintf(buf, "X: %ld   ", eixos.OUTX);
-		lcd_draw_string(40,20,buf, 0xFFFF, 1);
+		lcd_draw_string(0,20,buf, 0xFFFF, 1);
 
 		sprintf(buf, "Y: %ld   ", eixos.OUTY);
 		prvSendMessageUSART2(buf);
-		lcd_draw_string(40,30,buf, 0xFFFF, 1);
+		lcd_draw_string(0,30,buf, 0xFFFF, 1);
 
 		sprintf(buf, "Z: %ld   ", eixos.OUTZ);
-		lcd_draw_string(40,40,buf, 0xFFFF, 1);
+		lcd_draw_string(0,40,buf, 0xFFFF, 1);
 
 		xSemaphoreGive(xSemaphoreBinary1);
 		//vTaskDelay( (TickType_t ) 2000 / portTICK_RATE_MS);
@@ -773,4 +773,3 @@ void prvSetupEXTI15_10(void){
     EXTI_Init(&EXTI_InitStructure);
 
 }
-
