@@ -23,7 +23,7 @@ typedef struct button_t {
 extern button_t button_PA1;
 extern button_t button_PC10;
 extern button_t button_PC11;
-extern button_t button_PC12;
+extern button_t button_PC13;
 
 #define DEBOUNCE_TIME_MS 100
 
@@ -606,7 +606,7 @@ void USART2_IRQHandler(void)
 
 
 
-	xQueueSendToBack(xQueue, &RxData, ( TickType_t ) portMAX_DELAY);
+	//xQueueSendToBack(xQueue, &RxData, ( TickType_t ) portMAX_DELAY);
 }
 
 /*******************************************************************************
@@ -658,20 +658,6 @@ void EXTI15_10_IRQHandler()
         }
         //Clear the interrupt flag
         EXTI_ClearITPendingBit(EXTI_Line11);
-    }
-    //Check if the interrupt is caused by button PC12
-    if(EXTI_GetITStatus(EXTI_Line12) != RESET)
-    {
-        //Check for debounce time
-        uint32_t current_time = xTaskGetTickCount();
-        if(current_time - button_PC12.last_press_time > DEBOUNCE_TIME_MS)
-        {
-            //Push the character associated with button PC12 to the button event queue
-            xQueueSendToBackFromISR(button_queue, &button_PC12.character, pxHigherPriorityTaskWoken);
-            button_PC12.last_press_time = current_time;
-        }
-        //Clear the interrupt flag
-        EXTI_ClearITPendingBit(EXTI_Line12);
     }
     //Check if the interrupt is caused by button PC13
     if(EXTI_GetITStatus(EXTI_Line13) != RESET)
