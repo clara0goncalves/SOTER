@@ -11,25 +11,34 @@
 #include <stdint.h>
 #include <lcd.h>
 #include <stm32f10x.h>
+#include <mma8452q.h>
 
 /* Scheduler includes. */
 #include "FreeRTOS.h"
 #include "task.h"
 #include "lcd.h"
 #include "queue.h"
+#include "semphr.h"
 
 /* Task priorities. */
 #define mainFLASH_TASK_PRIORITY	( tskIDLE_PRIORITY + 1)
 #define mainUSART_TASK_PRIORITY	( tskIDLE_PRIORITY + 1)
 #define mainLCD_TASK_PRIORITY	( tskIDLE_PRIORITY + 1)
 
+#define DEBOUNCE_TIME_MS 100
 
-#define _MS5837_ADDR              0x76
-#define _MS5837_RESET             0x1E
-#define _MS5837_ADC_READ          0x00
-#define _MS5837_PROM_READ         0xA0
-#define _MS5837_CONVERT_D1_256    0x40
-#define _MS5837_CONVERT_D2_256    0x50
+char OUTX_L = 0;
+char OUTX_H = 0;
+int16_t OUTX = 0;
+char OUTY_L = 0;
+char OUTY_H = 0;
+int16_t OUTY = 0;
+char OUTZ_L = 0;
+char OUTZ_H = 0;
+int16_t OUTZ = 0;
+
+char buffer[15];
+char bufferpc[30];
 
 /* The rate at which the flash task toggles the LED. */
 #define mainFLASH_DELAY			( ( TickType_t ) 1000 / portTICK_RATE_MS )
@@ -52,7 +61,10 @@ static void prvTempTask( void *pvParameters );
 
 static void prvTask4( void *pvParameters );
 
-static void prvSensor(void *pvParameters);
+static void prvEixos(void *pvParameters);
+
+static void prvBater(void *pvParameters);
+
 /* Button task. */
 static void prvButtonTask( void *pvParameters );
 
@@ -70,13 +82,13 @@ static void prvSetupUSART2( void );
 /* USART2 send message. */
 static void prvSendMessageUSART2(char *message);
 
-void I2C2_Config(void);
-
-void I2C_write(uint8_t dev_addr, uint8_t reg_addr, uint8_t reg_data);
-
-uint8_t I2C_read(uint8_t dev_addr, uint8_t reg_addr);
-
 /***************************************/
+
+void SPI(void);
+
+uint8_t SPI_Send(uint8_t data);
+
+
 /* Task 1 handle variable. */
 TaskHandle_t HandleTask1;
 
@@ -106,7 +118,13 @@ QueueHandle_t button_queue;  /* Global variable. */
 
 QueueHandle_t xQueue3;
 
-#define DEBOUNCE_TIME_MS 100
+/* Semaphore Binary Handle Variable */
+SemaphoreHandle_t xSemaphoreBinary;
+
+SemaphoreHandle_t xSemaphoreBinary1;
+
+
+
 
 typedef struct button_t {
     uint16_t gpio_pin;
@@ -116,19 +134,23 @@ typedef struct button_t {
     uint8_t state;
 } button_t;
 
+typedef struct eixos{
+	int16_t OUTX;
+	int16_t OUTY;
+	int16_t OUTZ;
+}eixos;
 
 //Declaração dos botões
-button_t button_PA1 = {GPIO_Pin_1, GPIOA, 'O', 0, 0};
-button_t button_PC10 = {GPIO_Pin_10, GPIOC, 'U', 0, 0};
-button_t button_PC11 = {GPIO_Pin_11, GPIOC, 'L', 0, 0};
-button_t button_PC12 = {GPIO_Pin_12, GPIOC, 'R', 0, 0};
-button_t button_PC13 = {GPIO_Pin_13, GPIOC, 'D', 0, 0};
+button_t button_PA1 = {GPIO_Pin_1, GPIOA, 'S', 0, 0}; //Suspend
+button_t button_PC10 = {GPIO_Pin_10, GPIOC, 'I', 0, 0}; //Iniciar
+button_t button_PC11 = {GPIO_Pin_11, GPIOC, 'R', 0, 0}; //Resume
+button_t button_PC13 = {GPIO_Pin_13, GPIOC, 'P', 0, 0}; //Parar
+
 
 
 typedef struct val{
 	TickType_t tick;
 	int32_t temp;
-	int32_t press;
 }val;
 
 int main( void )
@@ -142,14 +164,11 @@ int main( void )
     prvSetupADC();
     prvSetupEXTI15_10();
 
-    I2C2_Config();
-
-    //uint8_t ctrl_reg1 = I2C_read(_MS5837_ADDR, _MS5837_CONVERT_D1_256);
-
+    SPI();
 
 
     //Create a message queue with a size of 10 and element size of 1 byte
-    xQueue = xQueueCreate(10, sizeof(char));
+    xQueue = xQueueCreate(40, sizeof(eixos));
 
     //Check if the queue was created successfully
     if( xQueue == 0 ) {
@@ -205,13 +224,28 @@ int main( void )
        		/* Queue created successfully. */
    		}
 
+	xSemaphoreBinary = xSemaphoreCreateBinary();
+	if( xSemaphoreBinary == NULL )
+	{
+		/*  Error creating the semaphore, it cannot be used. */
+	}
+
+	xSemaphoreBinary1 = xSemaphoreCreateBinary();
+	if( xSemaphoreBinary1 == NULL )
+	{
+		/*  Error creating the semaphore, it cannot be used. */
+	}
+
 	/* Create the tasks */
  	xTaskCreate( prvLcdTask, "Lcd", configMINIMAL_STACK_SIZE, NULL, mainLCD_TASK_PRIORITY, &HandleTask1 );
  	xTaskCreate( prvFlashTask1, "Flash1", configMINIMAL_STACK_SIZE, NULL, mainFLASH_TASK_PRIORITY, &HandleTask2 );
     xTaskCreate( prvButtonTask, "Button",configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask3 );
     xTaskCreate( prvTempTask, "Temp", configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask4 );
-    xTaskCreate( prvSensor, "Sensor press", configMINIMAL_STACK_SIZE, NULL, mainFLASH_TASK_PRIORITY, &HandleTask5 );
-    xTaskCreate( prvTask4, "Temp task", configMINIMAL_STACK_SIZE, NULL, mainFLASH_TASK_PRIORITY, &HandleTask6 );
+
+    xTaskCreate(prvBater, "Bater", configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask6 );
+
+    xTaskCreate(prvEixos, "Eixos", configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask5 );
+
     /* Start the scheduler. */
 	vTaskStartScheduler();
 
@@ -221,6 +255,49 @@ int main( void )
 
 /*-----------------------------------------------------------*/
 
+uint8_t SPI_Send(uint8_t data){
+
+	 while(SPI_I2S_GetFlagStatus(SPI2, SPI_I2S_FLAG_TXE) == RESET );
+	 SPI_I2S_SendData(SPI2, data);
+	 SPI_I2S_ClearFlag(SPI2, SPI_I2S_FLAG_TXE);
+	 while( SPI_I2S_GetFlagStatus(SPI2, SPI_I2S_FLAG_RXNE) == RESET );
+	 SPI_I2S_ClearFlag(SPI2, SPI_I2S_FLAG_RXNE);
+
+	return SPI_I2S_ReceiveData(SPI2);
+}
+
+void SPI(void){
+
+	SPI_InitTypeDef SPI_InitStructure;
+	SPI_InitStructure.SPI_Direction = SPI_Direction_2Lines_FullDuplex; // Full Duplex
+	SPI_InitStructure.SPI_Mode = SPI_Mode_Master;
+	SPI_InitStructure.SPI_DataSize = SPI_DataSize_8b;
+	SPI_InitStructure.SPI_CPOL = SPI_CPOL_High; //idles high
+	SPI_InitStructure.SPI_CPHA = SPI_CPHA_2Edge; // CPHA = 1
+	SPI_InitStructure.SPI_NSS = SPI_NSS_Soft; // NSS software
+	SPI_InitStructure.SPI_BaudRatePrescaler = SPI_BaudRatePrescaler_128;
+	SPI_InitStructure.SPI_FirstBit = SPI_FirstBit_MSB;
+	SPI_InitStructure.SPI_CRCPolynomial = 7;
+	SPI_Init(SPI2, &SPI_InitStructure);
+
+	SPI_Cmd(SPI2, ENABLE);
+
+	SPI_NSSInternalSoftwareConfig(SPI2, SPI_NSSInternalSoft_Set);
+
+	GPIO_WriteBit(GPIOD,GPIO_Pin_2,Bit_SET);
+
+	GPIO_WriteBit(GPIOD,GPIO_Pin_2,Bit_RESET);
+	SPI_Send(0x20);    // CTRL_REG1
+	SPI_Send(0b11000111);
+	//SPI_Send(0b11000111); //Device on, decimate by 512 (40hz), Z,Y e X Axis enable
+	GPIO_WriteBit(GPIOD,GPIO_Pin_2,Bit_SET);
+
+
+	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_RESET);
+	SPI_Send(0x21); // CTRL_REG2
+	SPI_Send(0b10000000); // Full Scale = +-6g, Update continuo, DRDY enable, little endian (LSB do Eixo X_L = 28h)
+	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_SET);
+}
 
 
 static void prvSetupADC( void )
@@ -248,6 +325,97 @@ static void prvSetupADC( void )
 
 }
 
+static void prvBater(void *pvParameters){
+
+	eixos eixos;
+	char buf[30];
+	for(;;){
+
+		xQueuePeek(xQueue, &eixos, (TickType_t) 200);
+
+		if(eixos.OUTX>100){
+			sprintf(buf, "Bateu", eixos.OUTX);
+			//prvSendMessageUSART2(buf);
+
+			vTaskSuspend(prvEixos);
+		}
+
+		/*sprintf(buf, "X: %ld   ", eixos.OUTX);
+		prvSendMessageUSART2(buf);*/
+	}
+}
+
+
+void prvEixos(void *parameters){
+
+	eixos eixos;
+
+	//char buf[30];
+
+	for(;;){
+
+	xSemaphoreTake( xSemaphoreBinary1, (TickType_t) portMAX_DELAY);
+
+	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_RESET); //Eixo X
+	OUTX_L = SPI_Send(0x28|0x80); //Register adress do OUTX_L
+	OUTX_L = SPI_Send(0x00); //ler o output do OUTX_L
+	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_SET);
+
+	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_RESET);
+	OUTX_H = SPI_Send(0x29|0x80); //Register adress do OUTX_H
+	OUTX_H = SPI_Send(0x00);
+	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_SET);
+
+	eixos.OUTX = (OUTX_H << 8) + OUTX_L; //Junta os valores High do OUTX com os Low
+
+
+	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_RESET); //Eixo Y
+	OUTY_L = SPI_Send(0x2A|0x80);
+	OUTY_L = SPI_Send(0x00);
+	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_SET);
+
+	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_RESET);
+	OUTY_H = SPI_Send(0x2B|0x80);
+	OUTY_H = SPI_Send(0x00);
+	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_SET);
+
+	eixos.OUTY = (OUTY_H << 8) + OUTY_L;
+
+
+	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_RESET); //Eixo Z
+	OUTZ_L = SPI_Send(0x2C|0x80);
+	OUTZ_L = SPI_Send(0x00);
+	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_SET);
+
+	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_RESET);
+	OUTZ_H = SPI_Send(0x2D|0x80);
+	OUTZ_H = SPI_Send(0x00);
+	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_SET);
+
+	eixos.OUTZ = (OUTZ_H << 8) + OUTZ_L;
+
+
+	//fila de mensagens
+
+	/*
+	sprintf(buf, "X: %ld", eixos.OUTX);
+	prvSendMessageUSART2(buf);
+	lcd_draw_string(60,20,buf, 0xFFFF, 1);
+	sprintf(buf, "Y: %ld", eixos.OUTY);
+	lcd_draw_string(60,30,buf, 0xFFFF, 1);
+	sprintf(buf, "Z: %ld", eixos.OUTZ);
+	lcd_draw_string(60,40,buf, 0xFFFF, 1);
+*/
+
+	xQueueSendToBack(xQueue, (void *) &eixos, (TickType_t) 200);
+
+	//xSemaphoreGive( xSemaphoreBinary);
+
+
+
+	}
+}
+
 /*-----------------------------------------------------------*/
 static void prvFlashTask1( void *pvParameters )
 {
@@ -271,27 +439,35 @@ static void prvLcdTask( void *pvParameters )
 	lcd_init( );
 	char buf[30];
 	//static uint32_t start_time = 0;
-
+	//int32_t temp;
 	val valores;
 
+	eixos eixos;
+
+	xSemaphoreGive(xSemaphoreBinary1);
 	for(;;)
 	{
-		// progress bar //
-		for(int i = 10; i <= 100; i += 10) lcd_draw_rect(10, i, 30, 10, 0xFFFF);
-
-		//xQueueReceive(xQueue, &ulVar, (TickType_t) portMAX_DELAY );
-		//lcd_draw_char( 63-(5*10)/2, 79-(7*10)/2, ulVar, 0xFFFF, 10 );
-
-		xQueuePeek(xQueue3, &valores, (TickType_t) portMAX_DELAY); // recebe do prvSensor os valores do tick, temp e %
-
+		xQueueReceive(xQueue, &eixos, (TickType_t) portMAX_DELAY); // recebe do prvEixos o X, Y e Z
+		xQueueReceive(xQueue3, &valores, (TickType_t) portMAX_DELAY);
 		sprintf(buf, "Temp: %ld", valores.temp);
-		lcd_draw_string(60,20,buf, 0xFFFF, 1);
-		sprintf(buf, "Tick: %ld", valores.tick);
-		lcd_draw_string(60,40,buf, 0xFFFF, 1);
-		sprintf(buf, "Pressao: %ld", valores.press);
-		lcd_draw_string(60,60,buf, 0xFFFF, 1);
+		lcd_draw_string(40,0,buf, 0xFFFF, 1);
 
-		vTaskDelay( (TickType_t ) 2000 / portTICK_RATE_MS);
+		sprintf(buf, "Tick: %ld", valores.tick);
+		lcd_draw_string(40,10,buf, 0xFFFF, 1);
+
+		sprintf(buf, "X: %ld   ", eixos.OUTX);
+		lcd_draw_string(40,20,buf, 0xFFFF, 1);
+
+		sprintf(buf, "Y: %ld   ", eixos.OUTY);
+		lcd_draw_string(40,30,buf, 0xFFFF, 1);
+
+		sprintf(buf, "Z: %ld   ", eixos.OUTZ);
+		lcd_draw_string(40,40,buf, 0xFFFF, 1);
+
+		xSemaphoreGive(xSemaphoreBinary1);
+		//vTaskDelay( (TickType_t ) 2000 / portTICK_RATE_MS);
+
+		//Check as condicoes dos botoes para apresentar no display o pretendido
 	}
 }
 /*-----------------------------------------------------------*/
@@ -324,10 +500,8 @@ static void prvTempTask( void *pvParameters )
 
         /*The temp variable has the temperature value times 10 */
 
-        //Ex.3
 
-
-        xQueueSendToBack(xQueue2, (void *) &temp, (TickType_t) 10);
+        //xQueueSendToBack(xQueue2, (void *) &temp, (TickType_t) 10);
 
 
         valores.temp = temp;
@@ -337,47 +511,10 @@ static void prvTempTask( void *pvParameters )
 
     }
 }
-/*-----------------------------------------------------------*/
-
-static void prvSensor(void *pvParameters){
-	lcd_init();
-
-	char buf_temp[20];
-	char buf_tick[20];
-
-	val valores;
-
-	for(;;){
-
-		//Receber Temp e press
-
-		valores.tick =xTaskGetTickCount();
-		//valores.press=
-		//valores.temp=
-
-		xQueueSendToBack(xQueue3, (void *) &valores, (TickType_t) 10); //envia valores do tick, temp e press %
-
-
-	}
-}
-
 
 
 /*-----------------------------------------------------------*/
-static void prvTask4(void *pvParameters){
-	lcd_init();
-	char buf[30];
-	val valores;
-	for(;;){
 
-	xQueueReceive(xQueue3, &valores, (TickType_t) portMAX_DELAY);
-	sprintf(buf, "%ld %ld\r\n", valores.temp, valores.tick);
-	prvSendMessageUSART2(buf);
-
-	}
-}
-
-/*-----------------------------------------------------------*/
 static void prvButtonTask( void *pvParameters ){
 	//lcd_init( );
 	//static BaseType_t pxHigherPriorityTaskWoken;
@@ -390,22 +527,33 @@ static void prvButtonTask( void *pvParameters ){
 
     for(;;){
 
-
-
-    	dif= (t1-t2);
+    	//take_mutex(1);
 
 		xQueueReceive(button_queue, (void *) &button_char, portMAX_DELAY);
-		sprintf(buf, "1: %ld ,  2: %ld %ld\r\n", t1, t2, dif);
+		//sprintf(buf, "1: %ld ,  2: %ld %ld\r\n", t1, t2, dif);
 		//t2=t1;
+		lcd_draw_char( 60, 100, button_char, 0xFFFF, 1 );
+		if(button_char == 'I'){
+			sprintf(buf, "Iniciou andamento \r\n");
+			//give_mutex(I);
+		}else if(button_char == 'P'){
+			sprintf(buf, "Parou \r\n");
+			//give_mutex(P);
+		}else if(button_char == 'S'){
+			sprintf(buf, "Suspendeu monitor \r\n");
+		}else if(button_char == 'R'){
+			sprintf(buf, "Reset \r\n");
+		}
 		prvSendMessageUSART2(buf);
 
 		GPIO_WriteBit(GPIOB, GPIO_Pin_1, (1-GPIO_ReadOutputDataBit(GPIOB, GPIO_Pin_1)));
-		if(dif < 100){
+		/*if(dif < 100){
 			//lcd_draw_char( 63-(5*10)/2, 79-(7*10)/2, button_char, 0xFFFF, 1 );
-			lcd_draw_char( 60, 10, button_char, 0xFFFF, 1 );
-		}
+			lcd_draw_char( 60, 100, button_char, 0xFFFF, 1 );
+		}*/
+		//give_mutex(1);
     }
-    return button_char;
+
 }
 
 static void prvSetupRCC( void )
@@ -459,8 +607,6 @@ static void prvSetupGPIO( void )
     GPIO_InitTypeDef GPIO_InitStructure;
     RCC_APB2PeriphClockCmd( RCC_APB2Periph_AFIO , ENABLE );
 
-    RCC_APB1PeriphClockCmd(RCC_APB1Periph_I2C2, ENABLE);
-
     /* Enable GPIOB clock */
     RCC_APB2PeriphClockCmd( RCC_APB2Periph_GPIOB , ENABLE );
 
@@ -469,6 +615,10 @@ static void prvSetupGPIO( void )
 
     /* Enable GPIOC clock */
     RCC_APB2PeriphClockCmd( RCC_APB2Periph_GPIOC , ENABLE );
+
+
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_SPI2, ENABLE); //Enable spi2
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOD, ENABLE); // SPI CS/SS
 
     GPIO_InitStructure.GPIO_Pin =  GPIO_Pin_0 | GPIO_Pin_1 ;
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
@@ -482,89 +632,39 @@ static void prvSetupGPIO( void )
 
 	GPIO_Init(GPIOA, &GPIO_InitStructure);
 
-    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_10 | GPIO_Pin_11 | GPIO_Pin_12 | GPIO_Pin_13;
+    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_10 | GPIO_Pin_11 | GPIO_Pin_13;
 	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU;
 	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
 
 	GPIO_Init(GPIOC, &GPIO_InitStructure);
 
-	//Inicialização I2C
-	GPIO_InitTypeDef GPIO_InitTypeDefStruct;
-	GPIO_StructInit(&GPIO_InitTypeDefStruct);
-	GPIO_InitTypeDefStruct.GPIO_Pin = GPIO_Pin_10 | GPIO_Pin_11; // SCL, SDA, SA0
-	GPIO_InitTypeDefStruct.GPIO_Mode = GPIO_Mode_AF_OD;
-	GPIO_InitTypeDefStruct.GPIO_Speed = GPIO_Speed_50MHz;
-	GPIO_Init(GPIOB, &GPIO_InitTypeDefStruct);
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_14; //MISO
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
+	GPIO_Init(GPIOB, &GPIO_InitStructure);
+
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_15; //MOSI
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+	GPIO_Init(GPIOB, &GPIO_InitStructure);
+
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_13; //SCK
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+	GPIO_Init(GPIOB, &GPIO_InitStructure);
+
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_5; //RDY
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
+	GPIO_Init(GPIOB, &GPIO_InitStructure);
+
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_2; // CS2
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
+	GPIO_Init(GPIOD, &GPIO_InitStructure);
+
 }
 /*-----------------------------------------------------------*/
-
-void I2C2_Config(void)
-{
-	//Configuração I2C
-
-	I2C_InitTypeDef I2C_InitStructure;
-
-	I2C_StructInit(&I2C_InitStructure);
-	I2C_InitStructure.I2C_Mode = I2C_Mode_I2C;
-	I2C_InitStructure.I2C_ClockSpeed = 400000;
-	I2C_InitStructure.I2C_DutyCycle = I2C_DutyCycle_2;
-	I2C_InitStructure.I2C_OwnAddress1 = 0x00;
-	I2C_InitStructure.I2C_Ack = I2C_Ack_Enable;
-	I2C_InitStructure.I2C_AcknowledgedAddress = I2C_AcknowledgedAddress_7bit;
-	I2C_Init(I2C2, &I2C_InitStructure);
-	I2C_Cmd(I2C2, ENABLE);
-
-}
-
-void I2C_write(uint8_t dev_addr, uint8_t reg_addr, uint8_t reg_data)
-{
-	while(!I2C_GetFlagStatus(I2C2, I2C_FLAG_BUSY)); // while the bus is busy
-
-	I2C_AcknowledgeConfig(I2C2, ENABLE);
-
-	I2C_GenerateSTART(I2C2, ENABLE); // send I2C start condition
-	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_MODE_SELECT));
-
-	I2C_Send7bitAddress(I2C2, dev_addr, I2C_Direction_Transmitter); // send device slave address for write
-	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_TRANSMITTER_MODE_SELECTED));
-
-	I2C_SendData(I2C2, reg_addr); // send the device internal register address
-	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_BYTE_TRANSMITTED));
-
-	I2C_SendData(I2C2, reg_data); // send data to register
-	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_BYTE_TRANSMITTED));
-
-	I2C_GenerateSTOP(I2C2, ENABLE);
-}
-
-uint8_t I2C_read(uint8_t dev_addr, uint8_t reg_addr)
-{
-	I2C_AcknowledgeConfig(I2C2, DISABLE);
-	while(I2C_GetFlagStatus(I2C2, I2C_FLAG_BUSY)); // while the bus is busy
-
-	I2C_GenerateSTART(I2C2, ENABLE); // send I2C start condition
-	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_MODE_SELECT));
-
-	I2C_Send7bitAddress(I2C2, dev_addr, I2C_Direction_Transmitter); // send device slave address for write
-	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_TRANSMITTER_MODE_SELECTED));
-
-	I2C_SendData(I2C2, reg_addr); //0x80 | reg_addr); // send the device internal register address
-	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_BYTE_TRANSMITTED));
-
-	I2C_GenerateSTART(I2C2, ENABLE); // repeated start
-	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_MODE_SELECT));
-
-	I2C_Send7bitAddress(I2C2, dev_addr, I2C_Direction_Receiver); // send device slave address for read
-	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_RECEIVER_MODE_SELECTED));
-	while(!I2C_CheckEvent(I2C2, I2C_EVENT_MASTER_BYTE_RECEIVED));
-
-	uint8_t read_reg = I2C_ReceiveData(I2C2);
-
-	I2C_GenerateSTOP(I2C2, ENABLE);
-	I2C_AcknowledgeConfig(I2C2, DISABLE);
-
-	return read_reg;
-}
 
 
 void prvSetupUSART2( void )
@@ -688,13 +788,13 @@ void prvSetupEXTI15_10(void){
     /*Connect Key Button EXTI Line to Key Button GPIO Pin*/
     GPIO_EXTILineConfig(GPIO_PortSourceGPIOC, GPIO_PinSource10);
     GPIO_EXTILineConfig(GPIO_PortSourceGPIOC, GPIO_PinSource11);
-    GPIO_EXTILineConfig(GPIO_PortSourceGPIOC, GPIO_PinSource12);
     GPIO_EXTILineConfig(GPIO_PortSourceGPIOC, GPIO_PinSource13);
 
-    EXTI_InitStructure.EXTI_Line = EXTI_Line10 | EXTI_Line11 | EXTI_Line12 | EXTI_Line13;
+    EXTI_InitStructure.EXTI_Line = EXTI_Line10 | EXTI_Line11 | EXTI_Line13;
     EXTI_InitStructure.EXTI_Mode = EXTI_Mode_Interrupt;
     EXTI_InitStructure.EXTI_Trigger = EXTI_Trigger_Rising;//Rising Edge
     EXTI_InitStructure.EXTI_LineCmd = ENABLE;
     EXTI_Init(&EXTI_InitStructure);
 
 }
+
