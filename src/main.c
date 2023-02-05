@@ -17,6 +17,7 @@
 #include "task.h"
 #include "lcd.h"
 #include "queue.h"
+#include "semphr.h"
 
 /* Task priorities. */
 #define mainFLASH_TASK_PRIORITY	( tskIDLE_PRIORITY + 1)
@@ -59,11 +60,9 @@ static void prvTempTask( void *pvParameters );
 
 static void prvTask4( void *pvParameters );
 
-static void prvSensor(void *pvParameters);
+static void prvEixos(void *pvParameters);
 /* Button task. */
 static void prvButtonTask( void *pvParameters );
-
-static void prvIniciar(void *pvParameters);
 
 static void prvUSART2Interrupt ( void );
 static void prvSetupEXTI1( void );
@@ -124,6 +123,11 @@ typedef struct button_t {
     uint8_t state;
 } button_t;
 
+typedef struct eixos{
+	int16_t OUTX;
+	int16_t OUTY;
+	int16_t OUTZ;
+}eixos;
 
 //Declaração dos botões
 button_t button_PA1 = {GPIO_Pin_1, GPIOA, 'S', 0, 0}; //Suspend
@@ -215,7 +219,8 @@ int main( void )
  	xTaskCreate( prvFlashTask1, "Flash1", configMINIMAL_STACK_SIZE, NULL, mainFLASH_TASK_PRIORITY, &HandleTask2 );
     xTaskCreate( prvButtonTask, "Button",configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask3 );
     xTaskCreate( prvTempTask, "Temp", configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask4 );
-    xTaskCreate( prvIniciar, "Iniciar", configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask5 );
+
+    xTaskCreate(prvEixos, "Eixos", configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask5 );
 
     /* Start the scheduler. */
 	vTaskStartScheduler();
@@ -296,14 +301,11 @@ static void prvSetupADC( void )
 
 }
 
-static void prvIniciar(void){
 
+void prvEixos(void *parameters){
+
+	eixos eixos;
 	for(;;){
-
-	}
-
-}
-void Eixos(){
 
 	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_RESET); //Eixo X
 	OUTX_L = SPI_Send(0x28|0x80); //Register adress do OUTX_L
@@ -315,7 +317,7 @@ void Eixos(){
 	OUTX_H = SPI_Send(0x00);
 	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_SET);
 
-	OUTX = (OUTX_H << 8) + OUTX_L; //Junta os valores High do OUTX com os Low
+	eixos.OUTX = (OUTX_H << 8) + OUTX_L; //Junta os valores High do OUTX com os Low
 
 
 	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_RESET); //Eixo Y
@@ -328,7 +330,7 @@ void Eixos(){
 	OUTY_H = SPI_Send(0x00);
 	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_SET);
 
-	OUTY = (OUTY_H << 8) + OUTY_L;
+	eixos.OUTY = (OUTY_H << 8) + OUTY_L;
 
 
 	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_RESET); //Eixo Z
@@ -341,8 +343,15 @@ void Eixos(){
 	OUTZ_H = SPI_Send(0x00);
 	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_SET);
 
-	OUTZ = (OUTZ_H << 8) + OUTZ_L;
+	eixos.OUTZ = (OUTZ_H << 8) + OUTZ_L;
 
+	//fila de mensagens
+
+	xQueueSendToBack(xQueue, (void *) &eixos, (TickType_t) 10);
+
+
+
+	}
 }
 
 /*-----------------------------------------------------------*/
@@ -368,27 +377,25 @@ static void prvLcdTask( void *pvParameters )
 	lcd_init( );
 	char buf[30];
 	//static uint32_t start_time = 0;
+	int32_t temp;
 
-	val valores;
-
+	eixos eixos;
 	for(;;)
 	{
-		// progress bar //
-		for(int i = 10; i <= 100; i += 10) lcd_draw_rect(10, i, 30, 10, 0xFFFF);
-
-		//xQueueReceive(xQueue, &ulVar, (TickType_t) portMAX_DELAY );
-		//lcd_draw_char( 63-(5*10)/2, 79-(7*10)/2, ulVar, 0xFFFF, 10 );
-
-		xQueuePeek(xQueue3, &valores, (TickType_t) portMAX_DELAY); // recebe do prvSensor os valores do tick, temp e %
-
-		sprintf(buf, "Temp: %ld", valores.temp);
+		xQueuePeek(xQueue, &eixos, (TickType_t) portMAX_DELAY); // recebe do prvEixos o X, Y e Z
+		xQueueReceive(xQueue2, &temp, (TickType_t) portMAX_DELAY);
+		sprintf(buf, "X: %ld", temp);
+		lcd_draw_string(60,10,buf, 0xFFFF, 1);
+		sprintf(buf, "X: %ld", eixos.OUTX);
 		lcd_draw_string(60,20,buf, 0xFFFF, 1);
-		sprintf(buf, "Tick: %ld", valores.tick);
+		sprintf(buf, "Y: %ld", eixos.OUTY);
+		lcd_draw_string(60,30,buf, 0xFFFF, 1);
+		sprintf(buf, "Z: %ld", eixos.OUTZ);
 		lcd_draw_string(60,40,buf, 0xFFFF, 1);
-		sprintf(buf, "Pressao: %ld", valores.press);
-		lcd_draw_string(60,60,buf, 0xFFFF, 1);
 
 		vTaskDelay( (TickType_t ) 2000 / portTICK_RATE_MS);
+
+		//Check as condicoes dos botoes para apresentar no display o pretendido
 	}
 }
 /*-----------------------------------------------------------*/
@@ -421,8 +428,6 @@ static void prvTempTask( void *pvParameters )
 
         /*The temp variable has the temperature value times 10 */
 
-        //Ex.3
-
 
         xQueueSendToBack(xQueue2, (void *) &temp, (TickType_t) 10);
 
@@ -450,15 +455,17 @@ static void prvButtonTask( void *pvParameters ){
 
     for(;;){
 
-
+    	//take_mutex(1);
 
 		xQueueReceive(button_queue, (void *) &button_char, portMAX_DELAY);
 		//sprintf(buf, "1: %ld ,  2: %ld %ld\r\n", t1, t2, dif);
 		//t2=t1;
 		if(button_char == 'I'){
 			sprintf(buf, "Iniciou andamento");
+			//give_mutex(I);
 		}else if(button_char == 'P'){
 			sprintf(buf, "Parou");
+			//give_mutex(P);
 		}else if(button_char == 'S'){
 			sprintf(buf, "Suspendeu monitor");
 		}else if(button_char == 'R'){
@@ -472,8 +479,9 @@ static void prvButtonTask( void *pvParameters ){
 			//lcd_draw_char( 63-(5*10)/2, 79-(7*10)/2, button_char, 0xFFFF, 1 );
 			lcd_draw_char( 60, 10, button_char, 0xFFFF, 1 );
 		}
+		//give_mutex(1);
     }
-    return button_char;
+
 }
 
 static void prvSetupRCC( void )
