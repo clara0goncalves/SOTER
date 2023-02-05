@@ -69,7 +69,6 @@ static void prvBater(void *pvParameters);
 static void prvButtonTask( void *pvParameters );
 
 static void prvUSART2Interrupt ( void );
-static void prvSetupEXTI1( void );
 static void prvSetupEXTI15_10(void);
 
 /* Configure the ADC */
@@ -141,7 +140,6 @@ typedef struct eixos{
 }eixos;
 
 //Declaração dos botões
-button_t button_PA1 = {GPIO_Pin_1, GPIOA, 'S', 0, 0}; //Suspend
 button_t button_PC10 = {GPIO_Pin_10, GPIOC, 'I', 0, 0}; //Iniciar
 button_t button_PC11 = {GPIO_Pin_11, GPIOC, 'R', 0, 0}; //Resume
 button_t button_PC13 = {GPIO_Pin_13, GPIOC, 'P', 0, 0}; //Parar
@@ -160,7 +158,6 @@ int main( void )
     prvSetupGPIO();
     prvSetupUSART2();
     prvUSART2Interrupt();
-    prvSetupEXTI1();
     prvSetupADC();
     prvSetupEXTI15_10();
 
@@ -329,15 +326,18 @@ static void prvBater(void *pvParameters){
 
 	eixos eixos;
 	char buf[30];
+
+
 	for(;;){
 
 		xQueuePeek(xQueue, &eixos, (TickType_t) 200);
 
 		if(eixos.OUTX>100){
 			sprintf(buf, "Bateu", eixos.OUTX);
-			//prvSendMessageUSART2(buf);
+			lcd_draw_string(30,100,buf, 0xFFFF, 2);
+			prvSendMessageUSART2(buf);
+			vTaskSuspend(HandleTask5);
 
-			vTaskSuspend(prvEixos);
 		}
 
 		/*sprintf(buf, "X: %ld   ", eixos.OUTX);
@@ -473,7 +473,7 @@ static void prvLcdTask( void *pvParameters )
 /*-----------------------------------------------------------*/
 
 /* Temperature task - demo to read the ADC and get the temperature. */
-/* Change this task accordingly. */
+
 static void prvTempTask( void *pvParameters )
 {
     TickType_t xLastExecutionTime;
@@ -500,10 +500,6 @@ static void prvTempTask( void *pvParameters )
 
         /*The temp variable has the temperature value times 10 */
 
-
-        //xQueueSendToBack(xQueue2, (void *) &temp, (TickType_t) 10);
-
-
         valores.temp = temp;
         valores.tick = xTaskGetTickCount();
 
@@ -527,20 +523,19 @@ static void prvButtonTask( void *pvParameters ){
 
     for(;;){
 
-    	//take_mutex(1);
 
 		xQueueReceive(button_queue, (void *) &button_char, portMAX_DELAY);
 		//sprintf(buf, "1: %ld ,  2: %ld %ld\r\n", t1, t2, dif);
 		//t2=t1;
 		lcd_draw_char( 60, 100, button_char, 0xFFFF, 1 );
 		if(button_char == 'I'){
+			vTaskDelay( (TickType_t) 2000 / portTICK_PERIOD_MS);
 			sprintf(buf, "Iniciou andamento \r\n");
+			vTaskResume(HandleTask5);//Iniciar depois de bater
 			//give_mutex(I);
 		}else if(button_char == 'P'){
 			sprintf(buf, "Parou \r\n");
 			//give_mutex(P);
-		}else if(button_char == 'S'){
-			sprintf(buf, "Suspendeu monitor \r\n");
 		}else if(button_char == 'R'){
 			sprintf(buf, "Reset \r\n");
 		}
@@ -625,12 +620,6 @@ static void prvSetupGPIO( void )
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
 
     GPIO_Init(GPIOB, &GPIO_InitStructure);
-
-    GPIO_InitStructure.GPIO_Pin =  GPIO_Pin_1;
-	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU;
-	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-
-	GPIO_Init(GPIOA, &GPIO_InitStructure);
 
     GPIO_InitStructure.GPIO_Pin = GPIO_Pin_10 | GPIO_Pin_11 | GPIO_Pin_13;
 	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU;
@@ -745,31 +734,6 @@ static void prvUSART2Interrupt ( void )
 	NVIC_Init(&NVIC_InitStructure);
 }
 
-static void prvSetupEXTI1( void )
-{
-
-    /*NVIC configuration*/
-    NVIC_InitTypeDef NVIC_InitStructure;
-
-    /* Enable the EXTI0 Interrupt */
-    NVIC_InitStructure.NVIC_IRQChannel = EXTI1_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
-    NVIC_Init(&NVIC_InitStructure);
-
-    /*Configure Key Button EXTI Line to generate an interrupt on falling edge*/
-    EXTI_InitTypeDef EXTI_InitStructure;
-
-    /*Connect Key Button EXTI Line to Key Button GPIO Pin*/
-    GPIO_EXTILineConfig(GPIO_PortSourceGPIOA, GPIO_PinSource1);
-
-    EXTI_InitStructure.EXTI_Line = EXTI_Line1;
-    EXTI_InitStructure.EXTI_Mode = EXTI_Mode_Interrupt;
-    EXTI_InitStructure.EXTI_Trigger = EXTI_Trigger_Rising;//Rising Edge
-    EXTI_InitStructure.EXTI_LineCmd = ENABLE;
-    EXTI_Init(&EXTI_InitStructure);
-
-
-}
 
 
 void prvSetupEXTI15_10(void){
