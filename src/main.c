@@ -333,10 +333,12 @@ static void prvBater(void *pvParameters){
 		xQueuePeek(xQueue, &eixos, (TickType_t) 200);
 
 		if(eixos.OUTX>100){
-			sprintf(buf, "Bateu", eixos.OUTX);
-			lcd_draw_string(30,100,buf, 0xFFFF, 2);
+
 			prvSendMessageUSART2(buf);
 			vTaskSuspend(HandleTask5);
+			lcd_draw_fillrect(0,0,128,160,0x0000);
+			sprintf(buf, "Bateu", eixos.OUTX);
+			lcd_draw_string(30,100,buf, 0xFFFF, 2);
 
 		}
 
@@ -352,6 +354,7 @@ void prvEixos(void *parameters){
 
 	//char buf[30];
 
+	 char buf[10];
 	for(;;){
 
 	xSemaphoreTake( xSemaphoreBinary1, (TickType_t) portMAX_DELAY);
@@ -407,8 +410,12 @@ void prvEixos(void *parameters){
 	lcd_draw_string(60,40,buf, 0xFFFF, 1);
 */
 
+
 	xQueueSendToBack(xQueue, (void *) &eixos, (TickType_t) 200);
 
+    unsigned int qStatus_xQueue = uxQueueMessagesWaiting(xQueue );
+    sprintf(buf, " Fila mensagem Eixos - %d \r\n ", qStatus_xQueue);
+    prvSendMessageUSART2(buf);
 	//xSemaphoreGive( xSemaphoreBinary);
 
 
@@ -445,15 +452,11 @@ static void prvLcdTask( void *pvParameters )
 	eixos eixos;
 
 	xSemaphoreGive(xSemaphoreBinary1);
+	xSemaphoreGive(xSemaphoreBinary);
 	for(;;)
 	{
 		xQueueReceive(xQueue, &eixos, (TickType_t) portMAX_DELAY); // recebe do prvEixos o X, Y e Z
 		xQueueReceive(xQueue3, &valores, (TickType_t) portMAX_DELAY);
-		sprintf(buf, "Temp: %ld", valores.temp);
-		lcd_draw_string(40,0,buf, 0xFFFF, 1);
-
-		sprintf(buf, "Tick: %ld", valores.tick);
-		lcd_draw_string(40,10,buf, 0xFFFF, 1);
 
 		sprintf(buf, "X: %ld   ", eixos.OUTX);
 		lcd_draw_string(40,20,buf, 0xFFFF, 1);
@@ -465,6 +468,15 @@ static void prvLcdTask( void *pvParameters )
 		lcd_draw_string(40,40,buf, 0xFFFF, 1);
 
 		xSemaphoreGive(xSemaphoreBinary1);
+
+		sprintf(buf, "Temp: %ld", valores.temp);
+		lcd_draw_string(40,0,buf, 0xFFFF, 1);
+
+		sprintf(buf, "Tick: %ld", valores.tick);
+		lcd_draw_string(40,10,buf, 0xFFFF, 1);
+
+		xSemaphoreGive(xSemaphoreBinary);
+
 		//vTaskDelay( (TickType_t ) 2000 / portTICK_RATE_MS);
 
 		//Check as condicoes dos botoes para apresentar no display o pretendido
@@ -485,7 +497,10 @@ static void prvTempTask( void *pvParameters )
     xLastExecutionTime = xTaskGetTickCount();
     for( ;; )
 	{
-    	vTaskDelayUntil ( &xLastExecutionTime, mainTEMP_DELAY);
+
+    	xSemaphoreTake( xSemaphoreBinary, (TickType_t) portMAX_DELAY);
+
+    	//vTaskDelayUntil ( &xLastExecutionTime, mainTEMP_DELAY);
         /* Read Sensor */
         ADC_SoftwareStartConvCmd(ADC1, ENABLE);
         while( ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) != SET );
@@ -505,6 +520,10 @@ static void prvTempTask( void *pvParameters )
 
         xQueueSendToBack(xQueue3, (void *) &valores, (TickType_t) 10);
 
+        unsigned int qStatus_xQueue3 = uxQueueMessagesWaiting(xQueue3);
+        sprintf(buf, " Fila mensagem Temperatura - %d \r\n ", qStatus_xQueue3);
+        prvSendMessageUSART2(buf);
+
     }
 }
 
@@ -520,6 +539,7 @@ static void prvButtonTask( void *pvParameters ){
 	char buf[30];
 	char buf_tick[60];
     char button_char;
+    char buffer[10];
 
     for(;;){
 
@@ -527,6 +547,10 @@ static void prvButtonTask( void *pvParameters ){
 		xQueueReceive(button_queue, (void *) &button_char, portMAX_DELAY);
 		//sprintf(buf, "1: %ld ,  2: %ld %ld\r\n", t1, t2, dif);
 		//t2=t1;
+        unsigned int qStatus_button = uxQueueMessagesWaiting(button_queue);
+        sprintf(buffer, " Fila mensagem Botões - %d \r\n ", qStatus_button);
+        prvSendMessageUSART2(buffer);
+
 		lcd_draw_char( 60, 100, button_char, 0xFFFF, 1 );
 		if(button_char == 'I'){
 			vTaskDelay( (TickType_t) 2000 / portTICK_PERIOD_MS);
