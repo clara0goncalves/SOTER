@@ -11,7 +11,6 @@
 #include <stdint.h>
 #include <lcd.h>
 #include <stm32f10x.h>
-#include <mma8452q.h>
 
 /* Scheduler includes. */
 #include "FreeRTOS.h"
