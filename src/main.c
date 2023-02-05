@@ -494,6 +494,8 @@ static void prvTempTask( void *pvParameters )
 
     val valores;
 
+    char buf[10];
+
     xLastExecutionTime = xTaskGetTickCount();
     for( ;; )
 	{
