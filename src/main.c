@@ -59,8 +59,6 @@ static void prvLcdTask( void *pvParameters );
 /* ADC temperature read task. */
 static void prvTempTask( void *pvParameters );
 
-static void prvTask4( void *pvParameters );
-
 static void prvEixos(void *pvParameters);
 
 static void prvBater(void *pvParameters);
@@ -109,20 +107,17 @@ TaskHandle_t HandleTask6;
 /*Create a Queue*/
 QueueHandle_t xQueue;  /* Global variable. */
 
-QueueHandle_t xQueue1;  /* Global variable. */
-
-QueueHandle_t xQueue2;  /* Global variable. */
-
 QueueHandle_t button_queue;  /* Global variable. */
 
 QueueHandle_t xQueue3;
 
 /* Semaphore Binary Handle Variable */
+
 SemaphoreHandle_t xSemaphoreBinary;
 
 SemaphoreHandle_t xSemaphoreBinary1;
 
-
+SemaphoreHandle_t xSemaphoreBinary2;
 
 
 typedef struct button_t {
@@ -143,7 +138,6 @@ typedef struct eixos{
 button_t button_PC10 = {GPIO_Pin_10, GPIOC, 'I', 0, 0}; //Iniciar
 button_t button_PC11 = {GPIO_Pin_11, GPIOC, 'R', 0, 0}; //Resume
 button_t button_PC13 = {GPIO_Pin_13, GPIOC, 'P', 0, 0}; //Parar
-
 
 
 typedef struct val{
@@ -177,31 +171,8 @@ int main( void )
     		/* Queue created successfully. */
 		}
 
-    //Create a message queue with a size of 10 and element size of 1 byte
-    xQueue1 = xQueueCreate(1, sizeof(TickType_t));
 
-    //Check if the queue was created successfully
-    if( xQueue1 == 0 ) {
-
-    	/* Queue was not created and must not be used. */
-
-    	}else
-		{
-    		/* Queue created successfully. */
-		}
-
-    xQueue2 = xQueueCreate(20, sizeof(char));
-        if( xQueue2 == 0 ) {
-
-           	/* Queue was not created and must not be used. */
-
-           	}else
-       		{
-           		/* Queue created successfully. */
-       		}
-
-
-    button_queue = xQueueCreate(20, sizeof(char));
+    button_queue = xQueueCreate(2, sizeof(button_queue));
     if( button_queue == 0 ) {
 
        	/* Queue was not created and must not be used. */
@@ -232,14 +203,19 @@ int main( void )
 	{
 		/*  Error creating the semaphore, it cannot be used. */
 	}
+	xSemaphoreBinary2 = xSemaphoreCreateBinary();
+	if( xSemaphoreBinary2 == NULL )
+	{
+		/*  Error creating the semaphore, it cannot be used. */
+	}
 
 	/* Create the tasks */
- 	xTaskCreate( prvLcdTask, "Lcd", configMINIMAL_STACK_SIZE, NULL, mainLCD_TASK_PRIORITY, &HandleTask1 );
- 	xTaskCreate( prvFlashTask1, "Flash1", configMINIMAL_STACK_SIZE, NULL, mainFLASH_TASK_PRIORITY, &HandleTask2 );
-    xTaskCreate( prvButtonTask, "Button",configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask3 );
-    xTaskCreate( prvTempTask, "Temp", configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask4 );
+ 	xTaskCreate( prvLcdTask, "Lcd", configMINIMAL_STACK_SIZE, NULL, mainLCD_TASK_PRIORITY+1, &HandleTask1 );
+ 	xTaskCreate( prvFlashTask1, "Flash1", configMINIMAL_STACK_SIZE, NULL, mainFLASH_TASK_PRIORITY+2, &HandleTask2 );
+    xTaskCreate( prvButtonTask, "Button",configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY+1, &HandleTask3 );
+    xTaskCreate( prvTempTask, "Temp", configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY+1, &HandleTask4 );
 
-    xTaskCreate(prvBater, "Bater", configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask6 );
+    xTaskCreate(prvBater, "Bater", configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY+1, &HandleTask6 );
 
     xTaskCreate(prvEixos, "Eixos", configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask5 );
 
@@ -326,24 +302,51 @@ static void prvBater(void *pvParameters){
 
 	eixos eixos;
 	char buf[30];
+	char buffer[30];
 
+	xSemaphoreGive(xSemaphoreBinary1);
+	xSemaphoreGive(xSemaphoreBinary);
 
 	for(;;){
 
-		xQueuePeek(xQueue, &eixos, (TickType_t) 200);
+		xQueueReceive(xQueue, &eixos, (TickType_t) 20);
 
-		if(eixos.OUTX>100){
+		if(eixos.OUTX>300 || eixos.OUTX<-300){
 
 			prvSendMessageUSART2(buf);
 			vTaskSuspend(HandleTask5);
-			lcd_draw_fillrect(0,0,128,160,0x0000);
-			sprintf(buf, "Bateu", eixos.OUTX);
+			sprintf(buf, "Bateu");
+			lcd_draw_string(30,100,buf, 0xFFFF, 2);
+
+		}else if(eixos.OUTY>300 || eixos.OUTY<-300){
+
+			prvSendMessageUSART2(buf);
+			vTaskSuspend(HandleTask5);
+			sprintf(buf, "Bateu");
+			lcd_draw_string(30,100,buf, 0xFFFF, 2);
+
+		}else if(eixos.OUTZ>200 || eixos.OUTZ<-600){
+
+			prvSendMessageUSART2(buf);
+			vTaskSuspend(HandleTask5);
+			sprintf(buf, "Bateu");
 			lcd_draw_string(30,100,buf, 0xFFFF, 2);
 
 		}
+	    unsigned int qStatus_xQueue = uxQueueMessagesWaiting(xQueue );
+	    sprintf(buffer, " Fila mensagem Eixos - %d \r\n ", qStatus_xQueue);
+	    prvSendMessageUSART2(buffer);
 
-		/*sprintf(buf, "X: %ld   ", eixos.OUTX);
-		prvSendMessageUSART2(buf);*/
+        unsigned int qStatus_xQueue3 = uxQueueMessagesWaiting(xQueue3);
+        sprintf(buffer, " Fila mensagem Temperatura - %d \r\n ", qStatus_xQueue3);
+        prvSendMessageUSART2(buffer);
+
+        unsigned int qStatus_button = uxQueueMessagesWaiting(button_queue);
+        sprintf(buffer, " Fila mensagem Botões - %d \r\n ", qStatus_button);
+        prvSendMessageUSART2(buffer);
+
+		xSemaphoreGive(xSemaphoreBinary1); //ler eixos quando termina de verificar acidente
+		xSemaphoreGive(xSemaphoreBinary); //sync com LCD
 	}
 }
 
@@ -352,12 +355,9 @@ void prvEixos(void *parameters){
 
 	eixos eixos;
 
-	//char buf[30];
-
-	 char buf[10];
 	for(;;){
 
-	xSemaphoreTake( xSemaphoreBinary1, (TickType_t) portMAX_DELAY);
+	xSemaphoreTake( xSemaphoreBinary1, (TickType_t) portMAX_DELAY); //sinc com prvBater
 
 	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_RESET); //Eixo X
 	OUTX_L = SPI_Send(0x28|0x80); //Register adress do OUTX_L
@@ -398,27 +398,7 @@ void prvEixos(void *parameters){
 	eixos.OUTZ = (OUTZ_H << 8) + OUTZ_L;
 
 
-	//fila de mensagens
-
-	/*
-	sprintf(buf, "X: %ld", eixos.OUTX);
-	prvSendMessageUSART2(buf);
-	lcd_draw_string(60,20,buf, 0xFFFF, 1);
-	sprintf(buf, "Y: %ld", eixos.OUTY);
-	lcd_draw_string(60,30,buf, 0xFFFF, 1);
-	sprintf(buf, "Z: %ld", eixos.OUTZ);
-	lcd_draw_string(60,40,buf, 0xFFFF, 1);
-*/
-
-
-	xQueueSendToBack(xQueue, (void *) &eixos, (TickType_t) 200);
-
-    unsigned int qStatus_xQueue = uxQueueMessagesWaiting(xQueue );
-    sprintf(buf, " Fila mensagem Eixos - %d \r\n ", qStatus_xQueue);
-    prvSendMessageUSART2(buf);
-	//xSemaphoreGive( xSemaphoreBinary);
-
-
+	xQueueSendToBack(xQueue, (void *) &eixos, (TickType_t) 20);
 
 	}
 }
@@ -445,18 +425,20 @@ static void prvLcdTask( void *pvParameters )
 {
 	lcd_init( );
 	char buf[30];
-	//static uint32_t start_time = 0;
-	//int32_t temp;
+
 	val valores;
 
 	eixos eixos;
 
-	xSemaphoreGive(xSemaphoreBinary1);
-	xSemaphoreGive(xSemaphoreBinary);
+	xSemaphoreGive(xSemaphoreBinary2);
 	for(;;)
 	{
-		xQueueReceive(xQueue, &eixos, (TickType_t) portMAX_DELAY); // recebe do prvEixos o X, Y e Z
+
+		xSemaphoreTake( xSemaphoreBinary, (TickType_t) portMAX_DELAY); //sync com prvBater, espera que este verifique se bateu
+
 		xQueueReceive(xQueue3, &valores, (TickType_t) portMAX_DELAY);
+		xQueuePeek(xQueue, &eixos, (TickType_t) portMAX_DELAY); // recebe do prvEixos o X, Y e Z
+
 
 		sprintf(buf, "X: %ld   ", eixos.OUTX);
 		lcd_draw_string(40,20,buf, 0xFFFF, 1);
@@ -467,7 +449,7 @@ static void prvLcdTask( void *pvParameters )
 		sprintf(buf, "Z: %ld   ", eixos.OUTZ);
 		lcd_draw_string(40,40,buf, 0xFFFF, 1);
 
-		xSemaphoreGive(xSemaphoreBinary1);
+
 
 		sprintf(buf, "Temp: %ld", valores.temp);
 		lcd_draw_string(40,0,buf, 0xFFFF, 1);
@@ -475,11 +457,8 @@ static void prvLcdTask( void *pvParameters )
 		sprintf(buf, "Tick: %ld", valores.tick);
 		lcd_draw_string(40,10,buf, 0xFFFF, 1);
 
-		xSemaphoreGive(xSemaphoreBinary);
+		xSemaphoreGive(xSemaphoreBinary2); //sync com temp
 
-		//vTaskDelay( (TickType_t ) 2000 / portTICK_RATE_MS);
-
-		//Check as condicoes dos botoes para apresentar no display o pretendido
 	}
 }
 /*-----------------------------------------------------------*/
@@ -494,13 +473,12 @@ static void prvTempTask( void *pvParameters )
 
     val valores;
 
-    char buf[10];
 
     xLastExecutionTime = xTaskGetTickCount();
     for( ;; )
 	{
 
-    	xSemaphoreTake( xSemaphoreBinary, (TickType_t) portMAX_DELAY);
+    	xSemaphoreTake( xSemaphoreBinary2, (TickType_t) portMAX_DELAY);
 
     	//vTaskDelayUntil ( &xLastExecutionTime, mainTEMP_DELAY);
         /* Read Sensor */
@@ -522,10 +500,6 @@ static void prvTempTask( void *pvParameters )
 
         xQueueSendToBack(xQueue3, (void *) &valores, (TickType_t) 10);
 
-        unsigned int qStatus_xQueue3 = uxQueueMessagesWaiting(xQueue3);
-        sprintf(buf, " Fila mensagem Temperatura - %d \r\n ", qStatus_xQueue3);
-        prvSendMessageUSART2(buf);
-
     }
 }
 
@@ -533,46 +507,58 @@ static void prvTempTask( void *pvParameters )
 /*-----------------------------------------------------------*/
 
 static void prvButtonTask( void *pvParameters ){
-	//lcd_init( );
-	//static BaseType_t pxHigherPriorityTaskWoken;
 
-	TickType_t t1, t2 =0 , dif;
 
 	char buf[30];
 	char buf_tick[60];
     char button_char;
     char buffer[10];
 
+    val valores;
+
+    char character;
+
+    TickType_t xTickCount;
+
     for(;;){
 
-
 		xQueueReceive(button_queue, (void *) &button_char, portMAX_DELAY);
-		//sprintf(buf, "1: %ld ,  2: %ld %ld\r\n", t1, t2, dif);
-		//t2=t1;
-        unsigned int qStatus_button = uxQueueMessagesWaiting(button_queue);
-        sprintf(buffer, " Fila mensagem Botões - %d \r\n ", qStatus_button);
-        prvSendMessageUSART2(buffer);
+
 
 		lcd_draw_char( 60, 100, button_char, 0xFFFF, 1 );
 		if(button_char == 'I'){
-			vTaskDelay( (TickType_t) 2000 / portTICK_PERIOD_MS);
+			if(character != 'P'){
+			//vTaskDelay( (TickType_t) 2000 / portTICK_PERIOD_MS);
 			sprintf(buf, "Iniciou andamento \r\n");
+			sprintf(buf, "Andar");
+			lcd_draw_string(30,100,buf, 0xFFFF, 2);
+			xQueueReset(xQueue);
 			vTaskResume(HandleTask5);//Iniciar depois de bater
-			//give_mutex(I);
+			}
 		}else if(button_char == 'P'){
 			sprintf(buf, "Parou \r\n");
-			//give_mutex(P);
-		}else if(button_char == 'R'){
-			sprintf(buf, "Reset \r\n");
+			vTaskSuspend(HandleTask5); //lcd
+			character = 'P';
+		}else if(button_char == 'R'){ // so funciona quando arrancamos do parado
+			if(character == 'P'){
+				xQueueReset(xQueue);
+
+
+				//MUdar o tickcount para 0, como se tivessemos desligado e ligado o carro
+
+
+			character = 'R';
+			sprintf(buf, "Ligou \r\n");
+			vTaskResume(HandleTask5);
+			}
+
 		}
 		prvSendMessageUSART2(buf);
 
+		xQueueReset(button_queue);
 		GPIO_WriteBit(GPIOB, GPIO_Pin_1, (1-GPIO_ReadOutputDataBit(GPIOB, GPIO_Pin_1)));
-		/*if(dif < 100){
-			//lcd_draw_char( 63-(5*10)/2, 79-(7*10)/2, button_char, 0xFFFF, 1 );
-			lcd_draw_char( 60, 100, button_char, 0xFFFF, 1 );
-		}*/
-		//give_mutex(1);
+
+
     }
 
 }
