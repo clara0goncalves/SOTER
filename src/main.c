@@ -11,7 +11,6 @@
 #include <stdint.h>
 #include <lcd.h>
 #include <stm32f10x.h>
-#include <mma8452q.h>
 
 /* Scheduler includes. */
 #include "FreeRTOS.h"
@@ -59,18 +58,20 @@ static void prvLcdTask( void *pvParameters );
 /* ADC temperature read task. */
 static void prvTempTask( void *pvParameters );
 
-static void prvTask4( void *pvParameters );
-
 static void prvEixos(void *pvParameters);
+
+static void prvBater(void *pvParameters);
+
 /* Button task. */
 static void prvButtonTask( void *pvParameters );
 
 static void prvUSART2Interrupt ( void );
-static void prvSetupEXTI1( void );
 static void prvSetupEXTI15_10(void);
 
 /* Configure the ADC */
 static void prvSetupADC( void );
+
+int flag_parar = 0;
 
 /********** Useful functions **********/
 /* USART2 configuration. */
@@ -107,22 +108,19 @@ TaskHandle_t HandleTask6;
 /*Create a Queue*/
 QueueHandle_t xQueue;  /* Global variable. */
 
-QueueHandle_t xQueue1;  /* Global variable. */
-
-QueueHandle_t xQueue2;  /* Global variable. */
-
 QueueHandle_t button_queue;  /* Global variable. */
 
 QueueHandle_t xQueue3;
 
 /* Semaphore Binary Handle Variable */
+
 SemaphoreHandle_t xSemaphoreBinary;
 
 SemaphoreHandle_t xSemaphoreBinary1;
 
+SemaphoreHandle_t xSemaphoreBinary2;
 
-
-
+uint32_t tickPrev = 0;
 typedef struct button_t {
     uint16_t gpio_pin;
     GPIO_TypeDef* gpio_port;
@@ -138,11 +136,9 @@ typedef struct eixos{
 }eixos;
 
 //Declaração dos botões
-button_t button_PA1 = {GPIO_Pin_1, GPIOA, 'S', 0, 0}; //Suspend
 button_t button_PC10 = {GPIO_Pin_10, GPIOC, 'I', 0, 0}; //Iniciar
 button_t button_PC11 = {GPIO_Pin_11, GPIOC, 'R', 0, 0}; //Resume
-button_t button_PC13 = {GPIO_Pin_12, GPIOC, 'P', 0, 0}; //Parar
-
+button_t button_PC13 = {GPIO_Pin_13, GPIOC, 'P', 0, 0}; //Parar
 
 
 typedef struct val{
@@ -157,7 +153,6 @@ int main( void )
     prvSetupGPIO();
     prvSetupUSART2();
     prvUSART2Interrupt();
-    prvSetupEXTI1();
     prvSetupADC();
     prvSetupEXTI15_10();
 
@@ -177,31 +172,8 @@ int main( void )
     		/* Queue created successfully. */
 		}
 
-    //Create a message queue with a size of 10 and element size of 1 byte
-    xQueue1 = xQueueCreate(1, sizeof(TickType_t));
 
-    //Check if the queue was created successfully
-    if( xQueue1 == 0 ) {
-
-    	/* Queue was not created and must not be used. */
-
-    	}else
-		{
-    		/* Queue created successfully. */
-		}
-
-    xQueue2 = xQueueCreate(20, sizeof(char));
-        if( xQueue2 == 0 ) {
-
-           	/* Queue was not created and must not be used. */
-
-           	}else
-       		{
-           		/* Queue created successfully. */
-       		}
-
-
-    button_queue = xQueueCreate(20, sizeof(char));
+    button_queue = xQueueCreate(2, sizeof(button_queue));
     if( button_queue == 0 ) {
 
        	/* Queue was not created and must not be used. */
@@ -232,12 +204,19 @@ int main( void )
 	{
 		/*  Error creating the semaphore, it cannot be used. */
 	}
+	xSemaphoreBinary2 = xSemaphoreCreateBinary();
+	if( xSemaphoreBinary2 == NULL )
+	{
+		/*  Error creating the semaphore, it cannot be used. */
+	}
 
 	/* Create the tasks */
- 	xTaskCreate( prvLcdTask, "Lcd", configMINIMAL_STACK_SIZE, NULL, mainLCD_TASK_PRIORITY, &HandleTask1 );
- 	xTaskCreate( prvFlashTask1, "Flash1", configMINIMAL_STACK_SIZE, NULL, mainFLASH_TASK_PRIORITY, &HandleTask2 );
-    xTaskCreate( prvButtonTask, "Button",configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask3 );
-    xTaskCreate( prvTempTask, "Temp", configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask4 );
+ 	xTaskCreate( prvLcdTask, "Lcd", configMINIMAL_STACK_SIZE, NULL, mainLCD_TASK_PRIORITY+1, &HandleTask1 );
+ 	xTaskCreate( prvFlashTask1, "Flash1", configMINIMAL_STACK_SIZE, NULL, mainFLASH_TASK_PRIORITY+2, &HandleTask2 );
+    xTaskCreate( prvButtonTask, "Button",configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY+1, &HandleTask3 );
+    xTaskCreate( prvTempTask, "Temp", configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY+1, &HandleTask4 );
+
+    xTaskCreate(prvBater, "Bater", configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY+1, &HandleTask6 );
 
     xTaskCreate(prvEixos, "Eixos", configMINIMAL_STACK_SIZE+100, NULL, mainFLASH_TASK_PRIORITY, &HandleTask5 );
 
@@ -320,16 +299,66 @@ static void prvSetupADC( void )
 
 }
 
+static void prvBater(void *pvParameters){
+
+	eixos eixos;
+	char buf[30];
+	char buffer[30];
+
+	xSemaphoreGive(xSemaphoreBinary1);
+	xSemaphoreGive(xSemaphoreBinary);
+
+	for(;;){
+
+		xQueueReceive(xQueue, &eixos, (TickType_t) 20);
+
+		if(eixos.OUTX>300 || eixos.OUTX<-300){
+
+			prvSendMessageUSART2(buf);
+			vTaskSuspend(HandleTask5);
+			sprintf(buf, "Bateu");
+			lcd_draw_string(30,100,buf, 0xFFFF, 2);
+
+		}else if(eixos.OUTY>300 || eixos.OUTY<-300){
+
+			prvSendMessageUSART2(buf);
+			vTaskSuspend(HandleTask5);
+			sprintf(buf, "Bateu");
+			lcd_draw_string(30,100,buf, 0xFFFF, 2);
+
+		}else if(eixos.OUTZ>200 || eixos.OUTZ<-600){
+
+			prvSendMessageUSART2(buf);
+			vTaskSuspend(HandleTask5);
+			sprintf(buf, "Bateu");
+			lcd_draw_string(30,100,buf, 0xFFFF, 2);
+
+		}
+	    unsigned int qStatus_xQueue = uxQueueMessagesWaiting(xQueue );
+	    sprintf(buffer, " Fila mensagem Eixos - %d \r\n ", qStatus_xQueue);
+	    prvSendMessageUSART2(buffer);
+
+        unsigned int qStatus_xQueue3 = uxQueueMessagesWaiting(xQueue3);
+        sprintf(buffer, " Fila mensagem Temperatura - %d \r\n ", qStatus_xQueue3);
+        prvSendMessageUSART2(buffer);
+
+        unsigned int qStatus_button = uxQueueMessagesWaiting(button_queue);
+        sprintf(buffer, " Fila mensagem Botões - %d \r\n ", qStatus_button);
+        prvSendMessageUSART2(buffer);
+
+		xSemaphoreGive(xSemaphoreBinary1); //ler eixos quando termina de verificar acidente
+		xSemaphoreGive(xSemaphoreBinary); //sync com LCD
+	}
+}
+
 
 void prvEixos(void *parameters){
 
 	eixos eixos;
 
-	//char buf[30];
-
 	for(;;){
 
-	xSemaphoreTake( xSemaphoreBinary1, (TickType_t) portMAX_DELAY);
+	xSemaphoreTake( xSemaphoreBinary1, (TickType_t) portMAX_DELAY); //sinc com prvBater
 
 	GPIO_WriteBit(GPIOD, GPIO_Pin_2, Bit_RESET); //Eixo X
 	OUTX_L = SPI_Send(0x28|0x80); //Register adress do OUTX_L
@@ -370,23 +399,7 @@ void prvEixos(void *parameters){
 	eixos.OUTZ = (OUTZ_H << 8) + OUTZ_L;
 
 
-	//fila de mensagens
-
-	/*
-	sprintf(buf, "X: %ld", eixos.OUTX);
-	prvSendMessageUSART2(buf);
-	lcd_draw_string(60,20,buf, 0xFFFF, 1);
-	sprintf(buf, "Y: %ld", eixos.OUTY);
-	lcd_draw_string(60,30,buf, 0xFFFF, 1);
-	sprintf(buf, "Z: %ld", eixos.OUTZ);
-	lcd_draw_string(60,40,buf, 0xFFFF, 1);
-*/
-
-	xQueueSendToBack(xQueue, (void *) &eixos, (TickType_t) 200);
-
-	//xSemaphoreGive( xSemaphoreBinary);
-
-
+	xQueueSendToBack(xQueue, (void *) &eixos, (TickType_t) 20);
 
 	}
 }
@@ -413,43 +426,46 @@ static void prvLcdTask( void *pvParameters )
 {
 	lcd_init( );
 	char buf[30];
-	//static uint32_t start_time = 0;
-	//int32_t temp;
+
 	val valores;
 
 	eixos eixos;
 
-	xSemaphoreGive(xSemaphoreBinary1);
+	xSemaphoreGive(xSemaphoreBinary2);
 	for(;;)
 	{
-		xQueueReceive(xQueue, &eixos, (TickType_t) portMAX_DELAY); // recebe do prvEixos o X, Y e Z
-		xQueueReceive(xQueue3, &valores, (TickType_t) portMAX_DELAY);
-		sprintf(buf, "Temp: %ld", valores.temp);
-		lcd_draw_string(0,0,buf, 0xFFFF, 1);
 
-		sprintf(buf, "Tick: %ld", valores.tick);
-		lcd_draw_string(0,10,buf, 0xFFFF, 1);
+		xSemaphoreTake( xSemaphoreBinary, (TickType_t) portMAX_DELAY); //sync com prvBater, espera que este verifique se bateu
+
+		xQueueReceive(xQueue3, &valores, (TickType_t) portMAX_DELAY);
+		if(flag_parar == 0){
+			xQueuePeek(xQueue, &eixos, (TickType_t) portMAX_DELAY); // recebe do prvEixos o X, Y e Z
+		}
 
 		sprintf(buf, "X: %ld   ", eixos.OUTX);
-		lcd_draw_string(0,20,buf, 0xFFFF, 1);
+		lcd_draw_string(40,20,buf, 0xFFFF, 1);
 
 		sprintf(buf, "Y: %ld   ", eixos.OUTY);
-		prvSendMessageUSART2(buf);
-		lcd_draw_string(0,30,buf, 0xFFFF, 1);
+		lcd_draw_string(40,30,buf, 0xFFFF, 1);
 
 		sprintf(buf, "Z: %ld   ", eixos.OUTZ);
-		lcd_draw_string(0,40,buf, 0xFFFF, 1);
+		lcd_draw_string(40,40,buf, 0xFFFF, 1);
 
-		xSemaphoreGive(xSemaphoreBinary1);
-		//vTaskDelay( (TickType_t ) 2000 / portTICK_RATE_MS);
 
-		//Check as condicoes dos botoes para apresentar no display o pretendido
+		sprintf(buf, "Temp: %ld", valores.temp);
+		lcd_draw_string(40,0,buf, 0xFFFF, 1);
+
+		sprintf(buf, "Tick: %ld", valores.tick);
+		lcd_draw_string(40,10,buf, 0xFFFF, 1);
+
+		xSemaphoreGive(xSemaphoreBinary2); //sync com temp
+
 	}
 }
 /*-----------------------------------------------------------*/
 
 /* Temperature task - demo to read the ADC and get the temperature. */
-/* Change this task accordingly. */
+
 static void prvTempTask( void *pvParameters )
 {
     TickType_t xLastExecutionTime;
@@ -457,11 +473,16 @@ static void prvTempTask( void *pvParameters )
     int32_t temp;
 
     val valores;
+    char buf[10];
+
 
     xLastExecutionTime = xTaskGetTickCount();
     for( ;; )
 	{
-    	vTaskDelayUntil ( &xLastExecutionTime, mainTEMP_DELAY);
+
+    	xSemaphoreTake( xSemaphoreBinary2, (TickType_t) portMAX_DELAY);
+
+    	//vTaskDelayUntil ( &xLastExecutionTime, mainTEMP_DELAY);
         /* Read Sensor */
         ADC_SoftwareStartConvCmd(ADC1, ENABLE);
         while( ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) != SET );
@@ -476,12 +497,8 @@ static void prvTempTask( void *pvParameters )
 
         /*The temp variable has the temperature value times 10 */
 
-
-        //xQueueSendToBack(xQueue2, (void *) &temp, (TickType_t) 10);
-
-
         valores.temp = temp;
-        valores.tick = xTaskGetTickCount();
+        valores.tick = xTaskGetTickCount() - tickPrev;
 
         xQueueSendToBack(xQueue3, (void *) &valores, (TickType_t) 10);
 
@@ -492,42 +509,56 @@ static void prvTempTask( void *pvParameters )
 /*-----------------------------------------------------------*/
 
 static void prvButtonTask( void *pvParameters ){
-	//lcd_init( );
-	//static BaseType_t pxHigherPriorityTaskWoken;
 
-	TickType_t t1, t2 =0 , dif;
 
 	char buf[30];
 	char buf_tick[60];
     char button_char;
+    char buffer[10];
+
+    val valores;
+
+    char character;
+
 
     for(;;){
 
-    	//take_mutex(1);
-
 		xQueueReceive(button_queue, (void *) &button_char, portMAX_DELAY);
-		//sprintf(buf, "1: %ld ,  2: %ld %ld\r\n", t1, t2, dif);
-		//t2=t1;
+
 		lcd_draw_char( 60, 100, button_char, 0xFFFF, 1 );
 		if(button_char == 'I'){
-			sprintf(buf, "Iniciou andamento \r\n");
-			//give_mutex(I);
+			if(character != 'P'){
+			//vTaskDelay( (TickType_t) 2000 / portTICK_PERIOD_MS);
+			sprintf(buf, "Andar");
+			lcd_draw_string(30,100,buf, 0xFFFF, 2);
+			xQueueReset(xQueue);
+			vTaskResume(HandleTask5);//Iniciar depois de bater
+			}
 		}else if(button_char == 'P'){
-			sprintf(buf, "Parou \r\n");
-			//give_mutex(P);
-		}else if(button_char == 'S'){
-			sprintf(buf, "Suspendeu monitor \r\n");
-		}else if(button_char == 'R'){
-			sprintf(buf, "Reset \r\n");
+			sprintf(buf, "Parou");
+			lcd_draw_string(30,100,buf, 0xFFFF, 2);
+			vTaskSuspend(HandleTask5); //lcd
+			flag_parar = 1;
+			character = 'P';
+		}else if(button_char == 'R'){ // so funciona quando arrancamos do parado
+			if(character == 'P'){
+				xQueueReset(xQueue);
+				character = 'R';
+				sprintf(buf, "Ligado");
+				lcd_draw_string(30,100,buf, 0xFFFF, 2);
+				tickPrev = xTaskGetTickCount();
+
+				flag_parar = 0;
+				vTaskResume(HandleTask5);
+			}
+
 		}
 		prvSendMessageUSART2(buf);
 
+		xQueueReset(button_queue);
 		GPIO_WriteBit(GPIOB, GPIO_Pin_1, (1-GPIO_ReadOutputDataBit(GPIOB, GPIO_Pin_1)));
-		/*if(dif < 100){
-			//lcd_draw_char( 63-(5*10)/2, 79-(7*10)/2, button_char, 0xFFFF, 1 );
-			lcd_draw_char( 60, 100, button_char, 0xFFFF, 1 );
-		}*/
-		//give_mutex(1);
+
+
     }
 
 }
@@ -601,12 +632,6 @@ static void prvSetupGPIO( void )
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
 
     GPIO_Init(GPIOB, &GPIO_InitStructure);
-
-    GPIO_InitStructure.GPIO_Pin =  GPIO_Pin_1;
-	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU;
-	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-
-	GPIO_Init(GPIOA, &GPIO_InitStructure);
 
     GPIO_InitStructure.GPIO_Pin = GPIO_Pin_10 | GPIO_Pin_11 | GPIO_Pin_13;
 	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU;
@@ -721,31 +746,6 @@ static void prvUSART2Interrupt ( void )
 	NVIC_Init(&NVIC_InitStructure);
 }
 
-static void prvSetupEXTI1( void )
-{
-
-    /*NVIC configuration*/
-    NVIC_InitTypeDef NVIC_InitStructure;
-
-    /* Enable the EXTI0 Interrupt */
-    NVIC_InitStructure.NVIC_IRQChannel = EXTI1_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
-    NVIC_Init(&NVIC_InitStructure);
-
-    /*Configure Key Button EXTI Line to generate an interrupt on falling edge*/
-    EXTI_InitTypeDef EXTI_InitStructure;
-
-    /*Connect Key Button EXTI Line to Key Button GPIO Pin*/
-    GPIO_EXTILineConfig(GPIO_PortSourceGPIOA, GPIO_PinSource1);
-
-    EXTI_InitStructure.EXTI_Line = EXTI_Line1;
-    EXTI_InitStructure.EXTI_Mode = EXTI_Mode_Interrupt;
-    EXTI_InitStructure.EXTI_Trigger = EXTI_Trigger_Rising;//Rising Edge
-    EXTI_InitStructure.EXTI_LineCmd = ENABLE;
-    EXTI_Init(&EXTI_InitStructure);
-
-
-}
 
 
 void prvSetupEXTI15_10(void){
