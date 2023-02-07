@@ -67,6 +67,7 @@ static void prvButtonTask( void *pvParameters );
 
 static void prvUSART2Interrupt ( void );
 static void prvSetupEXTI15_10(void);
+static void prvUsartTask( void *pvParameters );
 
 /* Configure the ADC */
 static void prvSetupADC( void );
@@ -104,6 +105,10 @@ TaskHandle_t HandleTask5;
 
 /* Task 5 handle variable. */
 TaskHandle_t HandleTask6;
+
+/* Task 5 handle variable. */
+TaskHandle_t HandleTask7;
+
 
 /*Create a Queue*/
 QueueHandle_t xQueue;  /* Global variable. */
@@ -334,6 +339,8 @@ static void prvBater(void *pvParameters){
 			lcd_draw_string(30,100,buf, 0xFFFF, 2);
 
 		}
+		prvSendMessageUSART2("----------------------------------------\r\n");
+		prvSendMessageUSART2("Estado Filas de Mensagem: \r\n");
 	    unsigned int qStatus_xQueue = uxQueueMessagesWaiting(xQueue );
 	    sprintf(buffer, " Fila mensagem Eixos - %d \r\n ", qStatus_xQueue);
 	    prvSendMessageUSART2(buffer);
@@ -345,6 +352,7 @@ static void prvBater(void *pvParameters){
         unsigned int qStatus_button = uxQueueMessagesWaiting(button_queue);
         sprintf(buffer, " Fila mensagem Botões - %d \r\n ", qStatus_button);
         prvSendMessageUSART2(buffer);
+        prvSendMessageUSART2("----------------------------------------\r\n");
 
 		xSemaphoreGive(xSemaphoreBinary1); //ler eixos quando termina de verificar acidente
 		xSemaphoreGive(xSemaphoreBinary); //sync com LCD
@@ -436,33 +444,47 @@ static void prvLcdTask( void *pvParameters )
 	{
 
 		xSemaphoreTake( xSemaphoreBinary, (TickType_t) portMAX_DELAY); //sync com prvBater, espera que este verifique se bateu
-
 		xQueueReceive(xQueue3, &valores, (TickType_t) portMAX_DELAY);
 		if(flag_parar == 0){
 			xQueuePeek(xQueue, &eixos, (TickType_t) portMAX_DELAY); // recebe do prvEixos o X, Y e Z
 		}
+		prvSendMessageUSART2("----------------------------------------\r\n");
+		prvSendMessageUSART2("valores:\r\n");
 
-		sprintf(buf, "X: %ld   ", eixos.OUTX);
+		sprintf(buf, "X: %ld ", eixos.OUTX);
 		lcd_draw_string(40,20,buf, 0xFFFF, 1);
+		prvSendMessageUSART2(buf);
+		prvSendMessageUSART2("\r\n");
 
 		sprintf(buf, "Y: %ld   ", eixos.OUTY);
 		lcd_draw_string(40,30,buf, 0xFFFF, 1);
+		prvSendMessageUSART2(buf);
+		prvSendMessageUSART2("\r\n");
 
 		sprintf(buf, "Z: %ld   ", eixos.OUTZ);
 		lcd_draw_string(40,40,buf, 0xFFFF, 1);
-
+		prvSendMessageUSART2(buf);
+		prvSendMessageUSART2("\r\n");
 
 		sprintf(buf, "Temp: %ld", valores.temp);
 		lcd_draw_string(40,0,buf, 0xFFFF, 1);
+		prvSendMessageUSART2(buf);
+		prvSendMessageUSART2("\r\n");
 
 		sprintf(buf, "Tick: %ld", valores.tick);
 		lcd_draw_string(40,10,buf, 0xFFFF, 1);
+		prvSendMessageUSART2(buf);
+		prvSendMessageUSART2("\r\n");
+
+		prvSendMessageUSART2("----------------------------------------\r\n");
 
 		xSemaphoreGive(xSemaphoreBinary2); //sync com temp
 
 	}
 }
 /*-----------------------------------------------------------*/
+
+
 
 /* Temperature task - demo to read the ADC and get the temperature. */
 
@@ -524,8 +546,7 @@ static void prvButtonTask( void *pvParameters ){
     for(;;){
 
 		xQueueReceive(button_queue, (void *) &button_char, portMAX_DELAY);
-
-		lcd_draw_char( 60, 100, button_char, 0xFFFF, 1 );
+		lcd_draw_char( 60, 60, button_char, 0xFFFF, 1 );
 		if(button_char == 'I'){
 			if(character != 'P'){
 			//vTaskDelay( (TickType_t) 2000 / portTICK_PERIOD_MS);
@@ -542,6 +563,7 @@ static void prvButtonTask( void *pvParameters ){
 			character = 'P';
 		}else if(button_char == 'R'){ // so funciona quando arrancamos do parado
 			if(character == 'P'){
+
 				xQueueReset(xQueue);
 				character = 'R';
 				sprintf(buf, "Ligado");
