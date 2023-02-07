@@ -1,10 +1,4 @@
-/**
-  1- sensor Temperatura --> Ok
-  2- sensor Pressão
-  3- tick timer
-  4- desenhar copo
-  5- criar unica funçao do lcd LCD TASK
-*/
+
 /* Standard includes. */
 #include <string.h>
 #include <stdio.h>
